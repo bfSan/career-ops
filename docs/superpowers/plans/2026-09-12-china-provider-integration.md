@@ -75,4 +75,4 @@
 
 A1–A4、B1–B5、C1–C3 已实施并本地审阅。最终239项通过、0失败、1项按设计跳过；旧58条研究和五份报告字节不变。BOSS配置锁、猎聘详情空白使本次真实采集均为 blocked_source；未循环尝试。个人能力路线与反馈仍 deferred。未提交或推送。
 
-验收文件：[实施与能力矩阵](../../../reports/china-market/provider-integration-2026-09-12/README.md)。RED/GREEN、例外说明与任务记录保留于 `.superpowers/sdd/2026-09-12-china-provider-integration/`。
+验收文件：实施与能力矩阵目录已于 2026-09-13 清理，逐文件哈希与恢复路径见 `data/china/research/maintenance/cleanup-2026-09-13.json`。RED/GREEN、例外说明与任务记录保留于 `.superpowers/sdd/2026-09-12-china-provider-integration/`。
