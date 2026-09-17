@@ -7,6 +7,14 @@
     "node": ">=18"
   },
   "scripts": {
+    "china:login": "node china-jobs.mjs login",
+    "china:scan": "node china-jobs.mjs scan",
+    "china:list": "node china-jobs.mjs list",
+    "china:queue": "node china-jobs.mjs queue",
+    "china:import": "node china-jobs.mjs import",
+    "china:market": "node china-market.mjs",
+    "china:companies": "node china-company-analysis.mjs",
+    "test:china": "node --test --test-concurrency=4 tests/china/*.test.mjs",
     "doctor": "node doctor.mjs",
     "or": "node openrouter-runner.mjs",
     "or:scan": "node openrouter-runner.mjs scan",

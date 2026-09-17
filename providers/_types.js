@@ -21,6 +21,8 @@
  * @property {string} company  May be empty when the source can't expose it
  *                             at the list-page level; populated downstream.
  * @property {string} location May be empty.
+ * @property {string} [companySizeRaw] Source's company employee-range label; never inferred from project/team counts.
+ * @property {object} [companySizeEvidence] Optional source field and exact quote for companySizeRaw.
  * @property {string} [description] Job description text, populated ONLY when the
  *                               provider's list payload carries it for free (no
  *                               extra per-job request — the scanner is zero-token),
@@ -32,9 +34,17 @@
  *                               empty/absent value always passes the filter.
  * @property {number} [postedAt] Epoch ms when the posting was published.
  *                               Omitted when the source doesn't expose a
- *                               usable date. scan.mjs ignores it; consumers
- *                               like scan-ats-full.mjs use it for recency
- *                               filtering.
+ *                               usable date. scan.mjs and scan-ats-full.mjs
+ *                               use it for date/recency filtering.
+ * @property {object} [compensation] Optional evidence-backed compensation facts from compensation.mjs.
+ * @property {Array<object>} [dates] Optional semantic DateFacts from posting-dates.mjs;
+ *                                  only a published fact may populate postedAt.
+ * @property {object} [sourceRef] Immutable archived source version. Domestic
+ *                               providers include schemaVersion, providerId,
+ *                               platform, jobKey, contentHash, capturePath,
+ *                               observedAt, availability and studyId. Core
+ *                               publishes an archive_ref only after filtering;
+ *                               read it through job-source.mjs, not arbitrary fs paths.
  * @property {{min?: number, max?: number, currency?: string}} [salary]
  *                               Annualized compensation, attached ONLY when the
  *                               source exposes real figures — never inferred

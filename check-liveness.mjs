@@ -25,6 +25,9 @@ import {
   sleep,
 } from './liveness-browser.mjs';
 import { checkLivenessViaApi } from './liveness-api.mjs';
+import {checkPosting,enabledDomesticProviders,createDomesticCheckerPool} from './liveness-dispatch.mjs';
+import {getCareerOpsRoot} from './path-resolver.mjs';
+import {fileURLToPath} from 'node:url';
 
 const USAGE = `Usage:
   node check-liveness.mjs [--no-fallback] [--throttle[=ms]] <url1> [url2] ...
@@ -81,28 +84,24 @@ async function main() {
     headed = noFallback ? null : createHeadedPageProvider(chromium);
   }
 
+  const dataRoot=getCareerOpsRoot(),domesticEnabled=await enabledDomesticProviders({codeRoot:fileURLToPath(new URL('.',import.meta.url)),dataRoot});
+  const domesticPool=createDomesticCheckerPool({dataRoot,domesticEnabled});
   let active = 0, expired = 0, uncertain = 0, viaApi = 0;
 
   // Sequential — project rule: never Playwright in parallel
+  try {
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i];
-    let result, reason, usedBrowser = false;
-
-    // Rung 1: zero-token ATS API check. A conclusive active/expired wins; otherwise fall through.
-    const api = await checkLivenessViaApi(url);
-    if (api) {
-      ({ result, reason } = api);
-      viaApi++;
-    } else {
-      // Rung 2: Playwright — handles non-ATS pages and inconclusive API results.
-      await ensureBrowser();
-      const getHeadedPage = headed ? () => headed.get() : undefined;
-      ({ result, reason } = await checkUrlLivenessWithFallback(page, url, { getHeadedPage }));
-      usedBrowser = true;
-    }
+    let usedBrowser=false,via='';
+    const {result,reason}=await checkPosting(url,{dataRoot,domesticEnabled,domesticChecker:await domesticPool.forUrl(url),fallback:async target=>{
+      const api=await checkLivenessViaApi(target);
+      if(api){viaApi++;via='(api) ';return api;}
+      await ensureBrowser();usedBrowser=true;
+      return checkUrlLivenessWithFallback(page,target,{getHeadedPage:headed?()=>headed.get():undefined});
+    }});
 
     const icon = { active: '✅', expired: '❌', uncertain: '⚠️' }[result];
-    console.log(`${icon} ${result.padEnd(10)} ${api ? '(api) ' : '      '}${url}`);
+    console.log(`${icon} ${result.padEnd(10)} ${via||'      '}${url}`);
     if (result !== 'active') console.log(`           ${reason}`);
     if (result === 'active') active++;
     else if (result === 'expired') expired++;
@@ -113,8 +112,11 @@ async function main() {
     if (wait) await sleep(wait);
   }
 
-  if (headed) await headed.close();
-  if (browser) await browser.close();
+  } finally {
+    await domesticPool.close();
+    if (headed) await headed.close();
+    if (browser) await browser.close();
+  }
 
   console.log(`\nResults: ${active} active  ${expired} expired  ${uncertain} uncertain  (${viaApi} via API, no browser)`);
   if (expired > 0 || uncertain > 0) process.exitCode = 1;

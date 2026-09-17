@@ -298,6 +298,8 @@ export const CANONICAL = {
  * @returns {string}
  */
 export function canonicalize(token) {
+  // The Agent reasoning method is distinct from the frontend framework.
+  if (token === 'ReAct') return token;
   const key = token.toLowerCase();
   // Alias map first (k8s → Kubernetes), then display casing from the token
   // list (graphql → GraphQL, pytorch → PyTorch) — never title-case, which
@@ -314,6 +316,7 @@ export function extractSkills(text) {
   if (!text) return new Set();
   const found = new Set();
   for (const m of text.matchAll(SKILL_PATTERN)) {
+    if (m[0] === 'ReAct') continue;
     found.add(canonicalize(m[0]));
   }
   if (GO_SKILL_PATTERN.test(text)) found.add('Go');

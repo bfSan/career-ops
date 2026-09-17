@@ -33,6 +33,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import * as yaml from 'js-yaml';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { validateNormalizedCompensation } from './compensation.mjs';
 
 const CAREER_OPS = getCareerOpsRoot();
 const OBS_PATH = join(CAREER_OPS, 'data/salary-observations.tsv');
@@ -197,11 +198,20 @@ export function reportToObservation(content, num, date) {
   // UNKNOWN (excluded from gap math, surfaced in currencyMismatches) — acceptable;
   // a corrective TSV observation with an explicit currency overrides it.
   const currencyGuess = adv ? (adv.match(/\b[A-Z]{3}\b/)?.[0] ?? 'UNKNOWN') : null;
+  const hasNormalized = /^advertised_comp_normalized\s*:/m.test(body);
+  let normalized=null;
+  if(hasNormalized){
+    try { normalized=validateNormalizedCompensation(yaml.load(body)); } catch { /* Invalid optional facts stay incomparable. */ }
+  }
+  const nonAnnual=typeof adv==='string'&&/月薪|日薪|\d+\s*薪|\/(?:月|天|日)|\b(?:month|monthly|mo|day|daily|hour|hourly)\b/i.test(adv);
+  const parsed=normalized?{min:normalized.min,max:normalized.max,
+    mid:normalized.min!==null&&normalized.max!==null?(normalized.min+normalized.max)/2:null}
+    :hasNormalized||nonAnnual?null:parseAmount(adv);
   return {
     company, role,
     observation: adv === null ? null : {
-      num, date, type: 'advertised', amount: adv, currency: currencyGuess,
-      source: 'jd', note: 'from report Machine Summary', parsed: parseAmount(adv),
+      num, date, type: 'advertised', amount: adv, currency: normalized?.currency??currencyGuess,
+      source: 'jd', note: 'from report Machine Summary', parsed,
     },
   };
 }
@@ -217,7 +227,7 @@ function pickEffective(type, candidates) {
   const tiers = TRUST[type];
   // Object.hasOwn, not `in`: a TSV source like "toString" would pass an `in`
   // check via Object.prototype and poison the trust sort with a function value.
-  const usable = candidates.filter(o => o.type === type && o.parsed !== null && Object.hasOwn(tiers, o.source));
+  const usable = candidates.filter(o => o.type === type && o.parsed !== null && Number.isFinite(o.parsed?.mid) && Object.hasOwn(tiers, o.source));
   if (!usable.length) return null;
   usable.sort((a, b) => (tiers[b.source] - tiers[a.source]) || (a.date < b.date ? 1 : -1));
   const top = usable[0];

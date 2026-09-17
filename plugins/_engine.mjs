@@ -442,7 +442,7 @@ function makeGuardedFetch(allowedHosts, { allowsLocalhost = false } = {}) {
  * CONVENIENCE (process.env is still globally reachable from any module) — the
  * real boundary is code review + trust.
  * @param {PluginManifestNormalized} manifest
- * @param {{ dryRun?: boolean, settings?: object }} [opts]
+ * @param {{ dataRoot?: string, dryRun?: boolean, settings?: object }} [opts]
  * @returns {PluginContext}
  */
 export function buildCtx(manifest, opts = {}) {
@@ -465,7 +465,7 @@ export function buildCtx(manifest, opts = {}) {
     };
     console.log(...args.map(redact));
   };
-  return /** @type {PluginContext} */ ({
+  const ctx = /** @type {PluginContext} */ ({
     transport: 'http',
     // The guarded primitive (HTTPS + allowedHosts + redirect re-validation).
     // Bundled plugins should route their HTTP through this so the egress guard
@@ -478,6 +478,13 @@ export function buildCtx(manifest, opts = {}) {
     log,
     dryRun: opts.dryRun === true,
   });
+  Object.defineProperty(ctx, 'dataRoot', {
+    value: opts.dataRoot,
+    enumerable: true,
+    writable: false,
+    configurable: false,
+  });
+  return ctx;
 }
 
 /**
@@ -512,7 +519,7 @@ async function importHook(manifest, kind) {
  * fail to import. Caller is responsible for dotenv (loadDotenvOnce) before this
  * if the keys live in .env.
  * @param {string} kind
- * @param {{ root: string, dryRun?: boolean }} opts
+ * @param {{ root: string, dataRoot?: string, dryRun?: boolean }} opts
  * @returns {Promise<Array<{ id: string, manifest: PluginManifestNormalized, hook: any, ctx: PluginContext }>>}
  */
 // Phrases that suggest a skill is trying to hijack the agent rather than
@@ -594,7 +601,7 @@ export function lockGate(manifest, root) {
   }
 }
 
-export async function loadPlugins(kind, { root, dryRun = false, pluginId = null }) {
+export async function loadPlugins(kind, { root, dataRoot = root, dryRun = false, pluginId = null }) {
   const cfg = await loadPluginConfig(root);
   let manifests = discoverPlugins(pluginRoots(root), resolveSuccessorIds(root)).filter(m => m.hooks.includes(kind));
   if (pluginId) manifests = manifests.filter(m => m.id === pluginId);
@@ -604,7 +611,7 @@ export async function loadPlugins(kind, { root, dryRun = false, pluginId = null 
     if (!lockGate(manifest, root).load) continue;
     const hook = await importHook(manifest, kind);
     if (!hook) continue;
-    out.push({ id: manifest.id, manifest, hook, ctx: buildCtx(manifest, { dryRun, settings: pluginSettings(manifest.id, cfg) }) });
+    out.push({ id: manifest.id, manifest, hook, ctx: buildCtx(manifest, { dataRoot, dryRun, settings: pluginSettings(manifest.id, cfg) }) });
   }
   return out;
 }
@@ -632,12 +639,12 @@ export async function loadDotenvOnce() {
  *
  * @param {string} kind
  * @param {*} payload   For provider this is unused; for ingest none; search a query; export a snapshot; notify a payload.
- * @param {{ root: string, dryRun?: boolean, timeoutMs?: number, pluginId?: string }} opts
+ * @param {{ root: string, dataRoot?: string, dryRun?: boolean, timeoutMs?: number, pluginId?: string }} opts
  * @returns {Promise<Array<{ id: string, ok: boolean, result?: any, error?: string }>>}
  */
-export async function runHook(kind, payload, { root, dryRun = false, timeoutMs = DEFAULT_HOOK_TIMEOUT_MS, pluginId = null }) {
+export async function runHook(kind, payload, { root, dataRoot = root, dryRun = false, timeoutMs = DEFAULT_HOOK_TIMEOUT_MS, pluginId = null }) {
   await loadDotenvOnce();
-  const loaded = await loadPlugins(kind, { root, dryRun, pluginId });
+  const loaded = await loadPlugins(kind, { root, dataRoot, dryRun, pluginId });
   const results = [];
   for (const { id, hook, ctx } of loaded) {
     const invoke = kind === 'search'
@@ -683,7 +690,7 @@ export function filterResultsForId(results, id) {
  *     the plugin off yields a helpful error, not a confusing "unknown provider".
  *
  * @param {Map<string, any>} providersMap   The Map returned by scan.mjs loadProviders.
- * @param {{ root: string }} opts
+ * @param {{ root: string, dataRoot?: string, dryRun?: boolean }} opts
  */
 // A detect-exempt provider whose fetch throws an actionable message — used when
 // a known provider plugin is inactive (disabled / missing key / failed import)
@@ -696,7 +703,7 @@ function inactiveProviderStub(id, reason) {
   };
 }
 
-export async function mergeProviderPlugins(providersMap, { root }) {
+export async function mergeProviderPlugins(providersMap, { root, dataRoot = root, dryRun = false }) {
   if (!existsSync(pluginsConfigPath(root))) return; // (1) opted out → inert (no work, no env read)
 
   // Everything past the opt-out gate is wrapped so an UNANTICIPATED throw
@@ -734,7 +741,7 @@ export async function mergeProviderPlugins(providersMap, { root }) {
         providersMap.set(manifest.id, inactiveProviderStub(manifest.id, 'failed to load — see ⚠️ above'));
         continue;
       }
-      const ctx = buildCtx(manifest, { settings: pluginSettings(manifest.id, cfg) });
+      const ctx = buildCtx(manifest, { dataRoot, dryRun, settings: pluginSettings(manifest.id, cfg) });
       providersMap.set(manifest.id, {
         id: manifest.id,
         detect: () => null, // (4) keyed providers never auto-detect

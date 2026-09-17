@@ -345,6 +345,7 @@ discard_reasons:
 via: {agency/recruiter firm as a quoted string, or null for direct applications}
 company_confidential: {true when the end employer is unknown (company is "?"), else false}
 advertised_comp: {verbatim JD salary/range as a quoted string (e.g. "80-90k EUR"), or null when the JD states nothing}
+advertised_comp_normalized: null # optional; follow the normalization contract below
 reports_to: {the JD's stated reporting line as a quoted string (e.g. "VP of Marketing"), or null when the JD names none}
 requirement_importance:
   - requirement: "{JD requirement}"
@@ -366,6 +367,7 @@ Rules:
 - `score` is numeric only, without `/5`.
 - `final_decision` must reflect the full evaluation, not only the CV match.
 - `advertised_comp` is the JD's **own** figure, verbatim; `null` when the JD states nothing — never estimate it and never substitute researched market data (Block D research stays in Block D). Batch workers never write `data/salary-observations.tsv` — the report itself is the advertised observation (`salary-gap.mjs` reads it).
+- Optional `advertised_comp_normalized` is `{raw, currency, period: "year", min, max, basis, evidence}`. `raw` must exactly equal `advertised_comp`; `currency` and original period must have explicit source evidence; `basis` is `monthly_x12` or `explicit_annual`; `min`/`max` are annual comparison amounts (unknown bound is null); `evidence` is a nonempty array of `{field, quote}` from the source. Validate through `validateNormalizedCompensation` in `compensation.mjs`. Monthly amounts use 12 months; extra payments such as 13薪 remain separate advertised facts and are not guaranteed cash. Omit/null for ambiguous, encoded or unknown amounts. A single bound produces no midpoint/gap. This is the sole normalized-compensation contract for all report templates.
 - `reports_to` is the reporting line the JD itself states, in the JD's own wording; `null` when the JD names none — never infer it from the title, the team size, or company research. It records the seat's altitude, which the title alone does not: an IC seat reporting to a Head of Marketing and one reporting to the CEO are different roles.
 - Do not invent missing data. If confidence is limited, set `confidence: "Low"` and explain the limitation in the human-readable sections.
 - `work_auth` reflects the Block A work-authorization tier: `no_sponsorship` only when the JD **explicitly** refuses sponsorship for a role outside the candidate's `authorized_in`; `unstated` when the JD is silent (neutral, not a blocker); `not_needed` when the role is within `authorized_in` or sponsorship isn't required; `sponsors` when the JD explicitly offers it.
@@ -423,6 +425,7 @@ discard_reasons:
 via: {agency/recruiter firm as a quoted string, or null for direct applications}
 company_confidential: {true when the end employer is unknown (company is "?"), else false}
 advertised_comp: {verbatim JD salary/range as a quoted string (e.g. "80-90k EUR"), or null when the JD states nothing}
+advertised_comp_normalized: null # optional; follow the normalization contract below
 reports_to: {the JD's stated reporting line as a quoted string (e.g. "VP of Marketing"), or null when the JD names none}
 requirement_importance:
   - requirement: "{JD requirement}"

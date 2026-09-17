@@ -1,0 +1,9 @@
+# Fork-owned domestic collection. Update this fork through Git.
+china/
+china-jobs.mjs
+china-market.mjs
+job-source.mjs
+compensation.mjs
+posting-dates.mjs
+
+liveness-dispatch.mjs

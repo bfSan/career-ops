@@ -75,6 +75,8 @@ import { localToday } from './lib/local-today.mjs';
 import { printScanSummaryHeader } from './lib/scan-summary-marker.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { promoteKnownFragmentIdentity } from './url-key.mjs';
+import { postingDayBounds, publishedDateFact, displayPostingDate } from './posting-dates.mjs';
+import {checkPosting,enabledDomesticProviders,createDomesticCheckerPool} from './liveness-dispatch.mjs';
 
 try {
   const { config } = await import('dotenv');
@@ -558,7 +560,9 @@ export function buildPostingAgeFilter(maxAgeDays, now = Date.now()) {
   const max = Number(maxAgeDays);
   if (!Number.isInteger(max) || max <= 0) return () => true;
   const cutoff = now - max * 24 * 60 * 60 * 1000; // N days in ms, subtracted from now
-  return (postedAt) => {
+  return (postedAt, dateFact) => {
+    const bounds = postingDayBounds(dateFact);
+    if (bounds) return bounds.end >= cutoff;
     if (typeof postedAt !== 'number' || !Number.isFinite(postedAt)) return true;
     return postedAt >= cutoff;
   };
@@ -674,7 +678,10 @@ export function buildPostedDateFilter(afterIso, beforeIso) {
   const hasAfter = Number.isFinite(afterMs);
   const hasBefore = Number.isFinite(beforeMs);
   if (!hasAfter && !hasBefore) return () => true;
-  return (postedAt) => {
+  return (postedAt, dateFact) => {
+    if (postingDayBounds(dateFact)) {
+      return (!hasAfter || dateFact.value >= afterIso) && (!hasBefore || dateFact.value <= beforeIso);
+    }
     if (typeof postedAt !== 'number' || !Number.isFinite(postedAt)) return true;
     if (hasAfter && postedAt < afterMs) return false;
     if (hasBefore && postedAt > beforeMs) return false;
@@ -2185,7 +2192,7 @@ export function formatPipelineOffer(offer) {
   else if (location) line = `${base} | ${location}`;
   // Optional labeled posting-date segment (like note:) — keeps the positional
   // 1/3/4/5-column contract in modes/pipeline.md intact.
-  const posted = postedAtIsoDate(offer.postedAt);
+  const posted = displayPostingDate(offer);
   if (posted) line = `${line} | posted: ${posted}`;
   // Labeled trust/legitimacy segment (#1743) — rides like posted:/note:, emitted
   // only when the scanner flagged the posting (score < 100). Ordered after
@@ -2222,7 +2229,7 @@ export function formatScanHistoryRow(offer, date, status = 'added') {
     offer.fingerprint ?? fingerprintText(offer.description),
     // New trailing column: posting date. Existing readers index by position up to
     // col 7, so appending col 8 is backward-compatible.
-    postedAtIsoDate(offer.postedAt),
+    displayPostingDate(offer),
     // Trust/legitimacy signal (#1743): score (only when the scanner flagged the
     // posting, i.e. < 100) + comma-joined flags. Trailing cols 9-10, so existing
     // index-based readers (fingerprint@7, postedAt@8) are unaffected; a clean
@@ -2622,35 +2629,25 @@ async function parallelFetch(tasks, limit) {
 
 // ── Main ────────────────────────────────────────────────────────────
 
-async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0, rediscover = false } = {}) {
-  // Dynamic imports keep the default zero-token path free of Playwright startup
-  let chromium;
-  let checkUrlLiveness;
-  let checkUrlLivenessWithFallback;
-  let createHeadedPageProvider;
-  let newLivenessPage;
-  let jitteredDelayMs;
-  let sleep;
-  try {
-    ({ chromium } = await import('playwright'));
-    ({ checkUrlLiveness, checkUrlLivenessWithFallback, createHeadedPageProvider, newLivenessPage, jitteredDelayMs, sleep } = await import('./liveness-browser.mjs'));
-  } catch (err) {
-    throw new Error(
-      `--verify requires Playwright with Chromium (run "npx playwright install chromium"): ${err.message}`,
-      { cause: err },
-    );
+export async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0, rediscover = false, dataRoot=DATA_ROOT, domesticEnabled=false, driverFactory, domesticChecker, domesticSleep, fallback } = {}) {
+  let chromium, checkUrlLiveness, checkUrlLivenessWithFallback, createHeadedPageProvider, newLivenessPage;
+  let browser, page, headed;
+  const {jitteredDelayMs,sleep}=await import('./liveness-browser.mjs');
+  async function ensureBrowser() {
+    if(browser)return;
+    try {
+      ({chromium}=await import('playwright'));
+      ({checkUrlLiveness,checkUrlLivenessWithFallback,createHeadedPageProvider,newLivenessPage}=await import('./liveness-browser.mjs'));
+      browser=await chromium.launch({headless:true});
+      page=await newLivenessPage(browser);
+      headed=headedFallback?createHeadedPageProvider(chromium):null;
+    }catch(err){throw new Error(`--verify could not launch Chromium (run "npx playwright install chromium" or re-run without --verify): ${err.message}`,{cause:err});}
   }
-
-  let browser;
-  try {
-    browser = await chromium.launch({ headless: true });
-  } catch (err) {
-    throw new Error(
-      `--verify could not launch Chromium (run "npx playwright install chromium" or re-run without --verify): ${err.message}`,
-      { cause: err },
-    );
-  }
-
+  const domesticPool=createDomesticCheckerPool({dataRoot,domesticEnabled,driverFactory,sleepImpl:domesticSleep});
+  const genericFallback=fallback||async function(url) {
+    await ensureBrowser();
+    return headed?checkUrlLivenessWithFallback(page,url,{getHeadedPage:()=>headed.get()}):checkUrlLiveness(page,url);
+  };
   // Three permanent buckets + one transient passthrough:
   //   verified  → active pages and transient nav errors (retry next scan)
   //   expired   → classifier-confirmed dead postings (HTTP 4xx, redirect markers,
@@ -2664,17 +2661,13 @@ async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0
   const invalid = [];
   const migrated = [];
 
-  const headed = headedFallback ? createHeadedPageProvider(chromium) : null;
-  const getHeadedPage = headed ? () => headed.get() : undefined;
+  const getHeadedPage = () => headed?.get();
 
   try {
-    const page = await newLivenessPage(browser);
     // Sequential — project rule: never Playwright in parallel
     for (let i = 0; i < offers.length; i++) {
       const offer = offers[i];
-      const { result, code, reason } = headed
-        ? await checkUrlLivenessWithFallback(page, offer.url, { getHeadedPage })
-        : await checkUrlLiveness(page, offer.url);
+      const { result, code, reason } = await checkPosting(offer.url,{dataRoot,domesticEnabled,driverFactory,domesticChecker:domesticChecker||await domesticPool.forUrl(offer.url),fallback:genericFallback});
       if (result === 'expired') {
         // 404/410 on a tracked company may just be a moved role — run one
         // search + re-verify before giving up (opt-in via --rediscover-404).
@@ -2725,7 +2718,8 @@ async function verifyOffers(offers, { headedFallback = false, throttleBaseMs = 0
     }
   } finally {
     if (headed) await headed.close();
-    await browser.close();
+    await domesticPool.close();
+    await browser?.close();
   }
 
   return { verified, expired, dropped, invalid, migrated };
@@ -2866,7 +2860,7 @@ async function main() {
   // Opt-in: merge enabled keyed/auth-gated provider plugins. Returns immediately
   // (no discovery, no dotenv, no process.env mutation) when config/plugins.yml is
   // absent — so a plain scan with no plugins configured stays byte-identical.
-  await mergeProviderPlugins(providers, { root: path.dirname(PROVIDERS_DIR) });
+  await mergeProviderPlugins(providers, { root: CODE_ROOT, dataRoot: DATA_ROOT, dryRun });
   if (providers.size === 0) {
     console.error('Error: no providers loaded from providers/');
     process.exit(1);
@@ -3128,11 +3122,11 @@ async function main() {
           totalFilteredLocation++;
           continue;
         }
-        if (!postingAgeFilter(job.postedAt)) {
+        if (!postingAgeFilter(job.postedAt, publishedDateFact(job))) {
           totalFilteredPostingAge++;
           continue;
         }
-        if (!postedDateFilter(job.postedAt)) {
+        if (!postedDateFilter(job.postedAt, publishedDateFact(job))) {
           totalFilteredPostedDate++;
           continue;
         }
@@ -3251,7 +3245,8 @@ async function main() {
   let migratedOffers = [];
   if (verify && newOffers.length > 0) {
     console.log(`\nVerifying liveness of ${newOffers.length} new offer(s) with Playwright (sequential)...`);
-    const result = await verifyOffers(newOffers, { headedFallback, throttleBaseMs, rediscover });
+    const domesticEnabled=await enabledDomesticProviders({codeRoot:CODE_ROOT,dataRoot:DATA_ROOT});
+    const result = await verifyOffers(newOffers, { headedFallback, throttleBaseMs, rediscover,domesticEnabled });
     verifiedOffers = result.verified;
     expiredOffers = result.expired;
     droppedOffers = result.dropped;
@@ -3278,6 +3273,14 @@ async function main() {
 
   // 6. Write results
   if (!dryRun && verifiedOffers.length > 0) {
+    if (verifiedOffers.some(offer => offer.sourceRef)) {
+      const { publishJobSource, withArchiveNote } = await import('./job-source.mjs');
+      for (const offer of verifiedOffers) {
+        if (!offer.sourceRef) continue;
+        const ref = await publishJobSource(DATA_ROOT, offer);
+        offer.note = withArchiveNote(offer, ref).note;
+      }
+    }
     await appendToPipeline(verifiedOffers);
     await appendToScanHistory(verifiedOffers, date);
   }
