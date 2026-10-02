@@ -42,14 +42,27 @@
 //     keywords: ["AI", "大模型"]
 //     max_pages: 5
 
-import { MACOS_BROWSER_LIKE_USER_AGENT } from './_http.mjs';
+import { MACOS_BROWSER_LIKE_USER_AGENT, fetchJsonWithRetry } from './_http.mjs';
 
 const PAGE_SIZE = 100;
 const DEFAULT_KEYWORDS = [''];  // empty keyword = the whole board, no topical bias
 const DEFAULT_MAX_PAGES = 200;
 // Every request after the first pays it — across pages and keyword switches
 // (same idiom as avature/workday/alibaba).
-const INTER_PAGE_DELAY_MS = 300;
+//
+// 2026-10-02: raised from 300ms to 1500ms — this board is the one that was
+// measured throttling. Four CN boards were probed back to back; the first
+// three answered normally and this one returned an empty body on the next
+// request. Two single-page requests seconds apart are not a burst, so the
+// throttle here is short-window and burst-insensitive to page size, which is
+// exactly the shape a fixed 300ms interval cannot defend against. It is also
+// the largest of the four (DEFAULT_MAX_PAGES=200), so it gets the widest gap.
+const INTER_PAGE_DELAY_MS = 1500;
+
+// Shared 429 handling. This board's throttle surfaces as an empty or malformed
+// body rather than a clean status, so the backoff is a floor, not the whole
+// defence — the interval above is the primary control.
+const RETRY_POLICY = { retries: 3, baseDelayMs: 2000, maxDelayMs: 30_000 };
 // Sent unconditionally: a no-op on tenants without ByteDance's own domain's
 // UA-sniffing rule, required on jobs.bytedance.com itself (see header).
 // NOT the shared Windows BROWSER_LIKE_USER_AGENT from _http.mjs — that one is a
@@ -154,7 +167,7 @@ export default {
         const offset = (page - 1) * PAGE_SIZE;
         let json;
         try {
-          json = /** @type {any} */ (await ctx.fetchJson(api, {
+          json = /** @type {any} */ (await fetchJsonWithRetry(ctx, api, {
             method: 'POST',
             headers: {
               'content-type': 'application/json',
@@ -164,7 +177,7 @@ export default {
             },
             body: JSON.stringify(keyword ? { limit: PAGE_SIZE, offset, keyword } : { limit: PAGE_SIZE, offset }),
             redirect: 'error',
-          }));
+          }, RETRY_POLICY));
           if (json?.code !== 0) {
             throw new Error(`API error: code=${json?.code}`);
           }

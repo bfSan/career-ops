@@ -238,6 +238,43 @@ try {
   } else {
     fail('meituan.fetch() swallowed a first-request failure');
   }
+
+  // 2026-10-02: fetchJsonWithRetry was wired in so a 429 backs off instead of
+  // truncating the keyword. Pin the observable behaviour, not the constant.
+  const throttled = mkCtx((_call, n) => (n === 2
+    ? Object.assign(new Error('rate limited'), { status: 429 })
+    : {
+        data: {
+          page: { totalCount: 120 },
+          list: n === 1
+            ? Array.from({ length: 100 }, (_, i) => mkJob(5000 + i, `岗位E${i}`))
+            : Array.from({ length: 20 }, (_, i) => mkJob(6000 + i, `岗位F${i}`)),
+        },
+      }));
+  throttled.ctx.fetchJson = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    throttled.calls.push({ keywords: body.keywords, pageNo: body.page.pageNo });
+    if (throttled.calls.length === 2) {
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    }
+    return throttled.ctx.__impl({ pageNo: body.page.pageNo }, throttled.calls.length);
+  };
+  throttled.ctx.__impl = ({ pageNo }, n) => ({
+    data: {
+      page: { totalCount: 120 },
+      list: n === 1
+        ? Array.from({ length: 100 }, (_, i) => mkJob(5000 + i, `岗位E${i}`))
+        : Array.from({ length: 20 }, (_, i) => mkJob(6000 + i, `岗位F${i}`)),
+    },
+  });
+  const throttledJobs = await meituan.fetch(
+    { name: '美团', careers_url: MEITUAN_URL, keywords: ['AI'] }, throttled.ctx);
+  if (throttledJobs.length === 120) {
+    pass('meituan.fetch() survives a 429 mid-pagination and still returns every job');
+  } else {
+    fail(`meituan.fetch() 429 recovery: ${throttledJobs.length} jobs (want 120)`);
+  }
+
 } catch (e) {
   fail(`meituan provider tests crashed: ${e.message}`);
 }

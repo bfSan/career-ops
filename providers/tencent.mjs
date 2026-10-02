@@ -1,7 +1,7 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
 
-import { sleep } from './_http.mjs';
+import { sleep, fetchJsonWithRetry } from './_http.mjs';
 
 // Tencent careers provider — hits the public careers.tencent.com JSON API.
 // Zero-token, no browser needed. Verified 2026-07: GET returns structured
@@ -21,7 +21,17 @@ const DEFAULT_KEYWORDS = [''];  // empty keyword = the whole board, no topical b
 const DEFAULT_MAX_PAGES = 20;
 // Every request after the first pays it — across pages and keyword switches
 // (same idiom as avature/workday).
-const INTER_PAGE_DELAY_MS = 250;
+//
+// 2026-10-02: raised from 250ms to 1200ms. This board sits behind the same kind
+// of edge layer as the other three CN boards and serves ~4000 postings for a
+// blank keyword, so a 20-page pull is a burst. The others all answered the
+// burst with an empty body; this one has no such record yet, but pacing it the
+// same way costs a few seconds and removes the question.
+const INTER_PAGE_DELAY_MS = 1200;
+
+// Shared 429 handling so a throttled page backs off instead of truncating the
+// keyword (same rationale as workday's RETRY_POLICY).
+const RETRY_POLICY = { retries: 3, baseDelayMs: 1500, maxDelayMs: 20_000 };
 
 /** Parse "2026年06月23日" → epoch ms. NaN-safe. */
 function parseCnDate(value) {
@@ -113,7 +123,7 @@ export default {
         let json;
         try {
           json = /** @type {any} */ (
-            await ctx.fetchJson(buildUrl(keyword, page), { redirect: 'error' })
+            await fetchJsonWithRetry(ctx, buildUrl(keyword, page), { redirect: 'error' }, RETRY_POLICY)
           );
         } catch (err) {
           // A dead board should still read as a failure, but a mid-run blip

@@ -376,6 +376,33 @@ try {
   } else {
     fail('feishu-jobs.fetch() swallowed a first-request failure');
   }
+
+  // 2026-10-02: fetchJsonWithRetry wired in — the shared 429 backoff has to
+  // reach this board too, and a mid-pagination 429 must not truncate the keyword.
+  let fsOffset100Seen = 0;
+  const fsThrottled = mkCtx(({ offset }) => {
+    if (offset === 100) {
+      fsOffset100Seen++;
+      if (fsOffset100Seen === 1) throw Object.assign(new Error('rate limited'), { status: 429 });
+    }
+    return {
+      code: 0,
+      data: {
+        count: 150,
+        job_post_list: offset === 0
+          ? Array.from({ length: 100 }, (_, i) => mkJob(String(3000 + i), `岗位C${i}`))
+          : Array.from({ length: 50 }, (_, i) => mkJob(String(4000 + i), `岗位D${i}`)),
+      },
+    };
+  });
+  const fsJobs = await feishu.fetch(
+    { name: 'Example Labs', careers_url: TENANT_URL, keywords: ['AI'] }, fsThrottled.ctx);
+  if (fsJobs.length === 150) {
+    pass('feishu-jobs.fetch() survives a 429 mid-pagination and still returns every job');
+  } else {
+    fail(`feishu-jobs.fetch() 429 recovery: ${fsJobs.length} jobs (want 150)`);
+  }
+
 } catch (e) {
   fail(`feishu-jobs provider tests crashed: ${e.message}`);
 }

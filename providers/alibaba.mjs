@@ -38,9 +38,22 @@ const PAGE_SIZE = 100;
 const DEFAULT_KEYWORDS = [''];  // empty keyword = the whole board, no topical bias
 const DEFAULT_MAX_PAGES = 50;   // whole board is ~4100 postings ≈ 42 pages
 // Every request after the first pays it — across pages and keyword switches
-// (same idiom as avature/workday). No rate-limiting observed live, but a
-// whole-board pull is 40+ requests, so pace politely.
-const INTER_PAGE_DELAY_MS = 300;
+// (same idiom as avature/workday). A whole-board pull is 40+ requests, so pace
+// politely. 2026-10-02: raised from 300ms. Measured live — the board served a
+// 100-row page without complaint, but a burst across several boards in quick
+// succession emptied the next response, and the API reports throttling with a
+// 200 and an empty `content.datas` rather than a 429, so the pacing has to hold
+// on its own instead of relying on the shared 429 backoff.
+const INTER_PAGE_DELAY_MS = 1200;
+
+// The endpoint fronts the double-submit CSRF filter with its own edge layer that
+// answers a throttled or blocked burst with HTTP 200 and no rows. Without retry
+// that reads as "this keyword genuinely has no matches" and silently truncates
+// the board, so a suspiciously empty page is retried like a transient failure.
+// Non-transient 4xx (other than 429) are still not retried.
+const RETRY_POLICY = { retries: 3, baseDelayMs: 1500, maxDelayMs: 20_000 };
+const EMPTY_PAGE_RETRIES = 2;
+const EMPTY_PAGE_BACKOFF_MS = 3000;
 
 /** experience is {from, to} in years; either side may be null/absent. */
 function formatExperience(exp) {
@@ -155,6 +168,16 @@ export default {
           // dead board doesn't read as an empty-but-alive one.
           if (json?.success === false) {
             throw new Error(`API error: ${json.errorMsg || json.errorCode || 'success=false'}`);
+          }
+          // A throttled edge answers 200 with no rows. Page 1 of a real keyword
+          // is allowed to be empty; any later page going empty right after a
+          // full one is the throttle signature, so retry it instead of
+          // recording a phantom end-of-board.
+          const rows = Array.isArray(json?.content?.datas) ? json.content.datas.length : 0;
+          if (rows === 0 && page > 1 && page <= EMPTY_PAGE_RETRIES + 1) {
+            await sleep(EMPTY_PAGE_BACKOFF_MS * page, ctx);
+            page--;
+            continue;
           }
         } catch (err) {
           // A dead board should still read as a failure, but a mid-run blip

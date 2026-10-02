@@ -239,6 +239,27 @@ try {
   } else {
     fail('tencent.fetch() swallowed a first-request failure');
   }
+
+  // 2026-10-02: fetchJsonWithRetry wired in — a 429 must back off, not truncate.
+  const tcThrottled = mkCtx((keyword, page) => {
+    if (page === 2 && tcThrottled.calls.filter((c) => c.page === 2).length === 1) {
+      throw Object.assign(new Error('rate limited'), { status: 429 });
+    }
+    return {
+      Data: {
+        Count: 120,
+        Posts: Array.from({ length: page === 1 ? 100 : 20 }, (_, i) => mkPost(9000 + page * 100 + i, `岗位T${page}_${i}`)),
+      },
+    };
+  });
+  const tcJobs = await tencent.fetch(
+    { name: '腾讯', careers_url: TENCENT_URL, keywords: ['AI'] }, tcThrottled.ctx);
+  if (tcJobs.length === 120) {
+    pass('tencent.fetch() survives a 429 mid-pagination and still returns every job');
+  } else {
+    fail(`tencent.fetch() 429 recovery: ${tcJobs.length} jobs (want 120)`);
+  }
+
 } catch (e) {
   fail(`tencent provider tests crashed: ${e.message}`);
 }

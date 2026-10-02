@@ -243,6 +243,32 @@ try {
   } else {
     fail('alibaba.fetch() swallowed a first-request failure');
   }
+
+  // 2026-10-02: this board's edge answers a throttle with HTTP 200 and an empty
+  // content.datas rather than a 429. A later page going empty right after a full
+  // one is that signature and must be retried, or a 40-page pull silently ends
+  // at page 2. Page 1 of a real keyword may legitimately be empty.
+  let aliPage2Seen = 0;
+  const aliThrottled = mkCtx((call) => {
+    if (call.pageIndex === 2) {
+      aliPage2Seen++;
+      if (aliPage2Seen === 1) return { success: true, content: { datas: [] } };
+    }
+    return {
+      success: true,
+      content: {
+        datas: Array.from({ length: call.pageIndex === 1 ? 100 : 20 }, (_, i) => mkJob(7000 + call.pageIndex * 100 + i, `岗位A${call.pageIndex}_${i}`)),
+      },
+    };
+  });
+  const aliJobs = await alibaba.fetch(
+    { name: '阿里巴巴', careers_url: ALIBABA_URL, keywords: ['AI'] }, aliThrottled.ctx);
+  if (aliJobs.length === 120) {
+    pass('alibaba.fetch() retries a throttled empty page instead of ending the board early');
+  } else {
+    fail(`alibaba.fetch() empty-page recovery: ${aliJobs.length} jobs (want 120)`);
+  }
+
 } catch (e) {
   fail(`alibaba provider tests crashed: ${e.message}`);
 }

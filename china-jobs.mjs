@@ -7,6 +7,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { searchUrl, validateSearchUrl, loginUrl } from './china/platforms.mjs';
+import { createRateLimiter } from './china/rate-limiter.mjs';
 import { openStore, queueJobs } from './china/store.mjs';
 import {selectBrowserDriver} from './china/driver-choice.mjs';
 import { collect } from './china/collector.mjs';
@@ -39,7 +40,8 @@ Options:
   --channel NAME     chrome（默认）、chromium 或 msedge
   --browser-driver N native 或 playwright；macOS BOSS/猎聘/LinkedIn Chrome 默认 native
   --headless         无界面采集；首次登录请用 login
-  --delay-ms N       页面操作间隔，默认15000，最低15000；不是平台风控保证
+  --delay-ms N       两次平台动作的间隔下限（列表页/每个详情页/每次翻页），默认15000，最低15000；
+                     规则 1 的限流预算，不是平台风控保证。首个动作不等待
   --timeout-ms N     页面等待预算，默认15000
   --help             显示帮助
 
@@ -138,6 +140,11 @@ export async function main(args=process.argv.slice(2)) {
     }finally {session?.dispose();rl?.close();await context.close().catch(()=>{});}
   }
   const createDriver=browserDriver==='native'?(await import('./china/native-driver.mjs')).createNativeDriver:createBrowserDriver;
+  // 规则 1: the operator's declared --delay-ms is the floor between two platform
+  // actions, not just the driver's page-readiness wait. Passing it into a single
+  // limiter instance means the listing page, every detail view and every page
+  // turn share one clock instead of each resetting it.
+  const limiter=createRateLimiter({platform,intervalMs:delayMs});
   // Collector validation (including resume policy identity) precedes browser startup.
   let driver;
   const deferredDriver={
@@ -150,7 +157,7 @@ export async function main(args=process.argv.slice(2)) {
     requestLog:()=>driver?.requestLog?.()||[],
   };
   try {
-    const result=await collect({root,platform,searchUrl:target,limit,maxPages,resume:!!v.resume,skipArchived:!v.refresh,marketPlan,driver:deferredDriver,onProgress:p=>console.error(`${p.key}: ${p.status}`)});
+    const result=await collect({root,platform,searchUrl:target,limit,maxPages,resume:!!v.resume,skipArchived:!v.refresh,marketPlan,driver:deferredDriver,limiter,onProgress:p=>p.status==='pacing'?console.error(`  ⏳ 限流等待 ${Math.round(p.waitedMs/1000)}s（规则 1 预算）……`):console.error(`${p.key}: ${p.status}`)});
     console.log(JSON.stringify(result,null,2));
     return ['blocked','partial'].includes(result.status)?2:0;
   }finally {await driver?.close();}

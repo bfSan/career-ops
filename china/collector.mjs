@@ -5,9 +5,16 @@ import { randomUUID } from 'node:crypto';
 import { withPipelineLock } from '../pipeline-lock.mjs';
 import { validateSearchUrl, jobIdentity, buildObservationFacts } from './platforms.mjs';
 import { openStore, saveStore, storePath, recordObservation, fingerprint } from './store.mjs';
+import { createRateLimiter } from './rate-limiter.mjs';
 
-export async function collect({root,platform,searchUrl,limit=20,maxPages=1,resume=false,skipArchived=false,marketPlan=null,driver,onProgress=()=>{}}) {
+export async function collect({root,platform,searchUrl,limit=20,maxPages=1,resume=false,skipArchived=false,marketPlan=null,driver,onProgress=()=>{},limiter=null}) {
   searchUrl=validateSearchUrl(platform,searchUrl);
+  // 规则 1: every platform action is paced. The driver's own delayMs is a
+  // page-readiness wait, not a spacing floor, so the job loop needs its own
+  // gate — a run that reads N detail views issues N requests back to back.
+  // A caller (e.g. the continuous collector) may pass its own limiter so that
+  // several runs share one budget instead of each resetting the clock.
+  const pacing=limiter||createRateLimiter({platform});
   const screen=loadListingScreen(root);
   if(marketPlan&&(!screen||marketPlan.policyDigest!==screen.policyDigest||!Array.isArray(marketPlan.records)))throw new Error('market plan policy missing or changed');
   const approved=marketPlan?new Set(marketPlan.records.filter(r=>r.state==='ready').map(r=>JSON.stringify([r.key,r.listingVersion]))):null;
@@ -112,7 +119,15 @@ export async function collect({root,platform,searchUrl,limit=20,maxPages=1,resum
         }
         if(count>=limit) return finish('limited','job_limit');
         const card=run.pending[0];
+        // Pace before every detail view, not just between pages: this is the
+        // click train that drove BOSS's security-check counter up. The first
+        // view of a run is free — the limiter charges the gap from the second.
+        const paced=await pacing.wait();
+        if(paced>0) onProgress({key:card.key,status:'pacing',waitedMs:paced});
         const detail=await read(()=>driver.detail(card));
+        // A security check resets the floor: the next action waits out the
+        // platform cooldown instead of resuming on the normal cadence.
+        if(detail.status==='challenge')pacing.noteChallenge();
         const fields=Object.fromEntries(Object.entries(detail.job || {}).filter(([,value])=>value!=='' && value!==null && value!==undefined));
         // Empty detail arrays must not discard useful list-side tags/quality flags.
         fields.tags=[...new Set([...(card.tags||[]),...(fields.tags||[])])];
@@ -144,7 +159,11 @@ export async function collect({root,platform,searchUrl,limit=20,maxPages=1,resum
       run.pageDone=true;save();
       if(count>=limit) return finish('limited','job_limit');
       if(pages>=maxPages) return finish('limited','page_limit');
+      // A page turn is a navigation and a fresh result set, so it pays the same
+      // gap as a detail view rather than firing straight after the last one.
+      await pacing.wait();
       page=await read(()=>driver.next());
+      if(page.status==='challenge')pacing.noteChallenge();
       if(page.status==='end') return finish('exhausted','end_of_results');
       if(page.status==='ok') {run.pageIndex++;run.pageDone=false;save();}
     }

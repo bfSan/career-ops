@@ -1,7 +1,7 @@
 // @ts-check
 /** @typedef {import('./_types.js').Provider} Provider */
 
-import { sleep } from './_http.mjs';
+import { sleep, fetchJsonWithRetry } from './_http.mjs';
 
 // Meituan careers provider — posts to the public zhaopin.meituan.com JSON API
 // (no auth, no browser, no special headers). Verified 2026-07 by capturing the
@@ -29,12 +29,20 @@ const DEFAULT_MAX_PAGES = 30;
 // Every request after the first pays it — across pages and keyword switches
 // (same idiom as avature/workday); 400ms instead of their 150 because this
 // board rate-limits harder (see EMPTY_RETRIES below).
-const INTER_PAGE_DELAY_MS = 400;
+//
+// 2026-10-02: raised from 400ms to 1200ms. The board already documents its own
+// throttle as "sporadic empty list", and a burst across boards produced exactly
+// that signature — an HTTP 200 with no rows — on the following request.
+const INTER_PAGE_DELAY_MS = 1200;
 // The board sporadically answers a mid-pagination request with an empty list
 // (observed live; reads as rate-limiting) — retry with backoff before
 // concluding a keyword is exhausted.
 const EMPTY_RETRIES = 2;
 const RETRY_BACKOFF_MS = 1500;
+// Shared 429 handling. The board does emit 429 under sustained load, and the
+// per-request timeout without this silently truncates a multi-page keyword the
+// same way a WAF 429 truncated Workday's tenants (see workday's RETRY_POLICY).
+const RETRY_POLICY = { retries: 3, baseDelayMs: 1500, maxDelayMs: 20_000 };
 
 function toEpochMs(v) {
   if (v == null) return undefined;
@@ -136,12 +144,12 @@ export default {
 
           let json;
           try {
-            json = await ctx.fetchJson(API, {
+            json = await fetchJsonWithRetry(ctx, API, {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: buildBody(keyword, pageNo),
               redirect: 'error',
-            });
+            }, RETRY_POLICY);
           } catch (err) {
             // A dead board should still read as a failure, but a mid-run blip
             // must not discard what's already collected (same idiom as
