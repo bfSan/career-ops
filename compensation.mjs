@@ -17,11 +17,11 @@ export function validateNormalizedCompensation(summary) {
   return {raw:n.raw,currency:n.currency,period:'year',min:annual.min??null,max:annual.max??null,basis:n.basis,evidence:structuredClone(n.evidence)};
 }
 const range = (min,max,currency,factor=1) => ({min:min===null?null:min*factor,max:max===null?null:max*factor,currency});
-export function parseCompensation({raw='',currency=null,period=null,evidence=[]}={}, {maxPayments=Infinity}={}) {
+export function parseCompensation({raw='',currency=null,period=null,evidence=[]}={}, {maxPayments=Infinity,allowUnsupportedPayRate=false}={}) {
   const c={raw,currency,period,min:null,max:null,paymentsPerYear:null,annualizedMonthly:null,advertisedAnnualCash:null,
     guaranteedPayments:null,status:'unknown',componentsUnknown:typeof raw==='string'&&/综合|浮动|绩效|奖金|提成|股票|期权/.test(raw),evidence};
   if(typeof raw!=='string'||!raw.trim()||/[\uE000-\uF8FF]/.test(raw)||/面议/.test(raw))return c;
-  if(hasUnsupportedPayRate(raw))return c;
+  if(!allowUnsupportedPayRate&&hasUnsupportedPayRate(raw))return c;
   if(!/^[A-Z]{3}$/.test(currency||'')||!['month','year','day'].includes(period)
     ||!Array.isArray(evidence)||!evidence.length||evidence.some(e=>!e||typeof e.field!=='string'||!e.field||typeof e.quote!=='string'||!e.quote))return c;
   const evidenceText=[raw,...evidence.map(e=>e.quote)].join('\n');

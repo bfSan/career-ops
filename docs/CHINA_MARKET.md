@@ -96,6 +96,16 @@ node china-market.mjs connect --study example-v1 --file /absolute/private/analys
 
 岗位主类为 application_agent、platform_infra、algorithm_model、engineering_solution、other_technical、unknown。按正文主要职责选择一个，已命名类别必须有原文依据。搜索词不是类别依据。
 
+岗位主类的第一遍归类规则在 `china/market-role-family.mjs`（有 `tests/china/market-role-family.test.mjs` 覆盖）。这条规则只作用于标题，产出的是待复核的建议；标题没有明确类别线索时返回 `unknown`，不能默认归入 `other_technical`。最终分类按 JD 正文的主要职责确定，并引用原文；标题与正文冲突时以正文为准。
+
+需要改口径时不要改代码，在 `data/china/market-defaults.json` 增加：
+
+```json
+{"roleFamily": {"overrides": [{"match": "FDE", "family": "application_agent", "reason": "用户口径"}]}}
+```
+
+`match` 为标题子串，大小写不敏感；`family` 必须是上面六个主类之一。命中即覆盖默认规则，未命中不受影响。薪资币种/周期与招聘渠道默认值同在 `data/china/market-defaults.json`（见 `china/market-defaults.mjs`）。
+
 cityGroup 为 scope.cities 之一，或 multiple/remote/unknown/conflict/outside_scope；除 unknown 外须有地点原文证据。搜索城市不能替代工作地点，公司名称不能证明岗位所在地。匿名公司 companyKey=null，不把“某大型公司”合并为一家企业。
 
 necessity 为 required/preferred/unspecified；evidenceTier 为 stated/structural/inferred。明确陈述标 stated，依任职要求/加分项所在段判断标 structural。inferred 仅为假设，不能标 required，也不进入事实频次。

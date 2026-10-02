@@ -31,3 +31,11 @@ test('historical unknown 30-payment snapshots remain readable after widening the
  assert.doesNotThrow(()=>validateObservationFacts({schemaVersion:1,compensation:old,dates:[]}));
  assert.throws(()=>validateObservationFacts({schemaVersion:1,compensation:{...old,min:123},dates:[]}));
 });
+test('historical per-hour snapshots stay readable after the unsupported-rate guard landed',()=>{
+ const c=parseCompensation({raw:'80-250元/时',currency:'CNY',period:'month',evidence:[{field:'visibleText',quote:'80-250元/时'}]});
+ assert.equal(c.status,'unknown','the guard refuses to read an hourly rate as a monthly salary');
+ const legacy={...c,min:80,max:250,annualizedMonthly:{min:960,max:3000,currency:'CNY'},status:'parsed'};
+ assert.doesNotThrow(()=>validateObservationFacts({schemaVersion:1,compensation:legacy,dates:[]}));
+ assert.throws(()=>validateObservationFacts({schemaVersion:1,compensation:{...legacy,min:8000},dates:[]}));
+ assert.throws(()=>validateObservationFacts({schemaVersion:1,compensation:{...legacy,annualizedMonthly:null},dates:[]}));
+});

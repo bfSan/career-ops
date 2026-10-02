@@ -3,26 +3,28 @@ import { extractPage, jobIdentity, validateSearchUrl } from './platforms.mjs';
 import { guardNavigation } from './navigation-guard.mjs';
 import { acquireBrowserProfile } from './browser-profile.mjs';
 import { observeSalaryFonts } from './salary.mjs';
-import {loadSessionCookies,saveSessionCookies,discardSessionCookies} from './session-cookies.mjs';
+import {loadSessionCookies,saveSessionCookies,discardSessionCookies,supportsSessionCookies} from './session-cookies.mjs';
 import {expandDescription} from './detail-controls.mjs';
 import {nextControl,searchIdentity,validateNextUrl} from './pagination.mjs';
 
 export async function openBrowser({root,platform,channel='chrome',headless=false,onEvent=()=>{}}) {
   const profile=await acquireBrowserProfile(root,platform);
-  const saved=platform==='boss'?loadSessionCookies(profile.directory,channel):null;
+  const cacheable=supportsSessionCookies(platform);
+  const saved=cacheable?loadSessionCookies(profile.directory,channel,platform):null;
   let context,closing,ownsProfile=true;
   const release=()=>{if(ownsProfile){ownsProfile=false;profile.release();}};
   try {
     context=await chromium.launchPersistentContext(profile.directory,{
       ...(channel==='chromium'?{}:{channel}),headless,locale:'zh-CN',acceptDownloads:false,
-      // Native BOSS login uses the OS credential store. Playwright's testing
-      // keychain cannot decrypt those cookies, even in the same profile.
-      ...(platform==='boss'?{ignoreDefaultArgs:['--use-mock-keychain','--password-store=basic']}:{}),
+      // A native login uses the OS credential store. Playwright's testing
+      // keychain cannot decrypt those cookies, even in the same profile, and on
+      // Linux the profile is only readable under the basic password store.
+      ...(cacheable?{ignoreDefaultArgs:['--use-mock-keychain','--password-store=basic']}:{}),
     });
     const close=context.close.bind(context);
     let cookieRevision=0,activeCookieWrites=0,cacheUnsafe=false;
     const pendingRequests=new Set();
-    if(platform==='boss'){
+    if(cacheable){
       // Cookie API calls can race shutdown; page keepalive requests can outlive
       // a closed tab. Only remember a quiescent session, never a stale sample.
       for(const method of ['addCookies','clearCookies']){
@@ -44,7 +46,7 @@ export async function openBrowser({root,platform,channel='chrome',headless=false
       if(closing)return;
       // An externally closed browser cannot provide a final live cookie set.
       // Never let a cache from a previous run resurrect deleted session cookies.
-      try{if(platform==='boss')discardSessionCookies(profile.directory);}
+      try{if(cacheable)discardSessionCookies(profile.directory);}
       catch{onEvent({event:'session_cookie_cache_error',platform,operation:'discard'});}
       finally{release();}
     });
@@ -52,27 +54,32 @@ export async function openBrowser({root,platform,channel='chrome',headless=false
       if(!ownsProfile)return close(...args);
       return closing ||= (async()=>{
         let cookies=null,sampledRevision;
-        if(platform==='boss'){
+        if(cacheable){
           if(pendingRequests.size)cacheUnsafe=true;
           try{
             await context.request.dispose();
-            await Promise.all(context.pages().map(page=>page.close({runBeforeUnload:false})));
-            if(context.serviceWorkers().length)cacheUnsafe=true;
+            // Sample while the pages are still open. Closing the last page makes
+            // Chrome evict session cookies (no expiry) from an otherwise idle
+            // profile, so sampling afterwards always loses exactly the cookies
+            // this cache exists to preserve. Quiescence is still enforced: the
+            // sample is only kept when nothing is in flight or being written.
             sampledRevision=cookieRevision;
-            if(!cacheUnsafe&&!activeCookieWrites)cookies=await context.cookies();
+            if(!cacheUnsafe&&!activeCookieWrites&&!pendingRequests.size)cookies=await context.cookies();
+            await Promise.all(context.pages().map(page=>page.close({runBeforeUnload:false})));
+            if(context.serviceWorkers().length||pendingRequests.size)cacheUnsafe=true;
           }catch{cacheUnsafe=true; /* Browser already exited or could not quiesce. */ }
         }
         try{
           await close(...args);
-          if(platform==='boss'){
-            if(cookies&&!cacheUnsafe&&!activeCookieWrites&&sampledRevision===cookieRevision)saveSessionCookies(profile.directory,channel,cookies);
+          if(cacheable){
+            if(cookies&&!cacheUnsafe&&!activeCookieWrites&&sampledRevision===cookieRevision)saveSessionCookies(profile.directory,channel,cookies,platform);
             else {
               discardSessionCookies(profile.directory);
               onEvent({event:'session_cookies_not_saved',platform,reason:'session_changed_or_inflight'});
             }
           }
         }catch(error){
-          if(platform==='boss')discardSessionCookies(profile.directory);
+          if(cacheable)discardSessionCookies(profile.directory);
           throw error;
         }finally{release();}
       })();

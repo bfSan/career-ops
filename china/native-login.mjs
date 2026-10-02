@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {accessSync,constants} from 'node:fs';
+import {accessSync,constants,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
 import {createInterface} from 'node:readline';
@@ -28,9 +28,40 @@ export async function openNativeLogin({root,platform,url,channel='chrome',execut
   const executable=executablePath || browserExecutable(channel);
   accessSync(executable,constants.X_OK);
   const profile=await acquireBrowserProfile(root,platform);
+  // A stale DevToolsActivePort left by a previous run (or by a profile copied
+  // from another machine) would be read as this session's port. Remove it so the
+  // bridge can only ever observe the port this launch publishes.
+  rmSync(join(profile.directory,'DevToolsActivePort'),{force:true});
   let child;
   try {
-    child=spawn(executable,[`--user-data-dir=${profile.directory}`,'--no-first-run','--no-default-browser-check','--new-window',url],{
+    // Deliberately no --new-window. BOSS's security check rewrites the search
+    // URL with a _security_check marker and then navigates back through history.
+    // Opening the URL as an "open in new window" target leaves a one-entry
+    // history, so that return lands on the homepage and the listing is never
+    // shown. Measured 2026-10-02 on this host: with --new-window 0 cards and a
+    // homepage redirect, without it 15 cards and the real listing. A dedicated
+    // --user-data-dir already guarantees a separate window.
+    child=spawn(executable,[`--user-data-dir=${profile.directory}`,'--no-first-run','--no-default-browser-check',
+      // Linux has no OS credential store here, so a logged-in profile's cookies
+      // are encrypted with Chrome's built-in store. Launching without this flag
+      // leaves Chrome unable to decrypt them: the window looks open but is
+      // signed out, and the site answers by clearing the page to about:blank.
+      // macOS keeps its Keychain, so the flag must not be applied there.
+      ...(process.platform==='linux'?['--password-store=basic']:[]),
+      // Port 0 lets Chrome pick a free port and publish it in
+      // <profile>/DevToolsActivePort; the CDP bridge reads that file instead of
+      // guessing. The bridge only ever sends commands and never enables a
+      // protocol domain, which is the signal BOSS actually reacts to.
+      '--remote-debugging-port=0',
+      // The restore bubble adds a second tab and would break the one-tab
+      // invariant the owned-window drivers enforce.
+      '--hide-crash-restore-bubble','--disable-session-crashed-bubble',
+      // The scanning window must reach the site over the same route the human
+      // login used, or the session that was just established belongs to a
+      // different egress and the site rejects it as a fresh environment.
+      // CHINA_PROXY_SERVER keeps that route explicit and identical for both.
+      ...(process.env.CHINA_PROXY_SERVER?[`--proxy-server=${process.env.CHINA_PROXY_SERVER}`]:[]),
+      url],{
       shell:false,detached:true,stdio:'ignore',
     });
   }catch(error) {profile.release();throw error;}

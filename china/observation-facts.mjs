@@ -12,7 +12,9 @@ export function validateObservationFacts(facts) {
   const c=facts.compensation;
   if(c!==null){
     if(!object(c)||typeof c.raw!=='string'||c.raw.length>4096||!Array.isArray(c.evidence)||c.evidence.length>32||!c.evidence.every(evidence)
-      ||(!isDeepStrictEqual(c,parseCompensation(c))&&!isDeepStrictEqual(c,parseCompensation(c,{maxPayments:24}))))throw new Error('invalid compensation facts');
+      ||(!isDeepStrictEqual(c,parseCompensation(c))&&!isDeepStrictEqual(c,parseCompensation(c,{maxPayments:24}))
+        &&!isDeepStrictEqual(c,parseCompensation(c,{allowUnsupportedPayRate:true}))
+        &&!isDeepStrictEqual(c,parseCompensation(c,{maxPayments:24,allowUnsupportedPayRate:true}))))throw new Error('invalid compensation facts');
   }
   if(facts.dates!==null){
     if(!Array.isArray(facts.dates)||facts.dates.length>32)throw new Error('invalid date facts');

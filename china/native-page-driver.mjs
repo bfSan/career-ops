@@ -1,11 +1,11 @@
 import {nextControl,searchIdentity,searchPageIdentity,validateNextUrl} from './pagination.mjs';
 import {openNativeLogin} from './native-login.mjs';
-import {createNativeBridge} from './native-bridge.mjs';
+import {createCdpBridge} from './cdp-bridge.mjs';
 import {extractPage,jobIdentity,validateSearchUrl,platformUrl} from './platforms.mjs';
 import {expandDescription} from './detail-controls.mjs';
 
 // Standalone detail pages share this lifecycle; BOSS retains its panel driver.
-export async function createNativePageDriver({root,platform='liepin',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=createNativeBridge}) {
+export async function createNativePageDriver({root,platform='liepin',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=createCdpBridge}) {
  if(channel!=='chrome')throw new Error('Native scanning requires Chrome');
  let session,bridge,tab,closing,blocked,search='',listUrl='',lastSignature='',previousUrl='',previousOrigin=null,boundUrl='',navigating=false,platformVisited=false;
  const cards=new Map(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -16,8 +16,9 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
  async function current(){
   if(blocked)return blocked;
   let tabs=await bridge.tabs();
-    // Apple Events can transiently return an empty inventory for a live tab.
-    // Re-read once without navigation; never rebind an established tab or retry errors.
+    // The DevTools inventory can transiently miss a live tab while Chrome
+    // swaps a target. Re-read once without navigation; never rebind an
+    // established tab or retry errors.
     if(!tabs.length&&tab&&!blocked){
       await pause(250);
       if(blocked)return blocked;
@@ -122,7 +123,7 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    search=validateSearchUrl(platform,url);await wait();
    session=await sessionFactory({root,platform,channel,url:search});
    session.closed?.then(exit=>{if(!closing){onEvent({event:'native_browser_exited',platform,code:exit?.code??null});blocked||={status:'browser_closed'};}});
-   bridge=await bridgeFactory({root,session});onEvent({event:'native_browser_started',platform,debugger:false});
+   bridge=await bridgeFactory({root,session});onEvent({event:'native_browser_started',platform,debugger:true});
    let result=await read('listing',search);
    for(let i=0;i<pageIndex&&result.status==='ok';i++)result=await next();
    return result;

@@ -18,7 +18,7 @@ function fixture(t,body) {
   return {root,platform:'boss',url:'https://www.zhipin.com/web/user/',executablePath};
 }
 
-test('native BOSS login opens the collector profile without a debugger and waits for graceful close',async t=>{
+test('native BOSS login opens the collector profile on an ephemeral debug port and waits for graceful close',async t=>{
   assert.equal(typeof login.openNativeLogin,'function');
   const options=fixture(t);
   const session=await login.openNativeLogin(options);
@@ -26,7 +26,13 @@ test('native BOSS login opens the collector profile without a debugger and waits
   const args=JSON.parse(readFileSync(join(options.root,'args.json'),'utf8'));
   assert.ok(args.includes(`--user-data-dir=${join(options.root,'data/china/browser/boss')}`));
   assert.equal(args.at(-1),options.url);
-  assert.ok(!args.some(a=>/debugging|automation|disable-blink|headless/.test(a)));
+  // The owned window is reachable through CDP, but only on a port Chrome picks
+  // itself and publishes in DevToolsActivePort. No fixed port is ever bound.
+  assert.ok(args.includes('--remote-debugging-port=0'),'binds an ephemeral debug port, never a fixed one');
+  // No flag may try to hide automation; the transport is not concealed.
+  assert.ok(!args.some(a=>/automation|disable-blink|headless|remote-debugging-pipe/.test(a)));
+  // The restore bubble would add a second tab and break the one-tab invariant.
+  assert.ok(args.includes('--hide-crash-restore-bubble'));
   await session.close();
   assert.equal(readFileSync(join(options.root,'flushed'),'utf8'),'yes');
   await session.close();

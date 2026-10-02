@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {chromium} from 'playwright';
 import {openBrowser as openProfileBrowser} from '../../china/browser.mjs';
+import {loadSessionCookies} from '../../china/session-cookies.mjs';
 
 const channel=process.env.CHINA_TEST_CHANNEL||'chrome';
 const openBrowser=options=>openProfileBrowser({channel,...options});
@@ -53,10 +54,15 @@ test('BOSS remembers session cookies across normal closes without restoring any 
 
 test('changed native Chrome credentials invalidate an earlier session-cookie snapshot',async t=>{
   const root=mkdtempSync(join(tmpdir(),'china-session-changed-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const directory=join(root,'data/china/browser/boss');
   let context=await openBrowser({root,platform:'boss',headless:true});t.after(()=>context?.close());
   await context.addCookies(fixtures);await context.close();context=null;
-  context=await chromium.launchPersistentContext(join(root,'data/china/browser/boss'),{...(channel==='chromium'?{}:{channel}),headless:true,ignoreDefaultArgs:['--use-mock-keychain','--password-store=basic']});
-  await context.addCookies([{...fixtures[0],value:'synthetic-new-login'}]);await context.close();context=null;
+  assert.equal(loadSessionCookies(directory,channel).reason,'saved_session');
+  context=await chromium.launchPersistentContext(directory,{...(channel==='chromium'?{}:{channel}),headless:true,ignoreDefaultArgs:['--use-mock-keychain','--password-store=basic']});
+  await context.addCookies([{...fixtures[0],value:'synthetic-new-login'}]);
+  assert.equal((await context.cookies('https://www.zhipin.com/')).find(c=>c.name==='career_ops_persistent')?.value,'synthetic-new-login','native Chrome accepted the changed credential');
+  await context.close();context=null;
+  assert.equal(loadSessionCookies(directory,channel).reason,'profile_changed','a changed encrypted cookie store invalidates the old snapshot');
   context=await openBrowser({root,platform:'boss',headless:true});
   const cookies=await context.cookies('https://www.zhipin.com/');
   assert.equal(cookies.find(c=>c.name==='career_ops_persistent')?.value,'synthetic-new-login');
@@ -95,7 +101,7 @@ test('clearing cookies during shutdown cannot resurrect the old session snapshot
   assert.equal((await context.cookies()).find(c=>c.name==='career_ops_session'),undefined);
 });
 
-test('BOSS closes its pages before sampling session cookies at shutdown',async t=>{
+test('BOSS samples session cookies while its pages are still open, then closes them',async t=>{
   const root=mkdtempSync(join(tmpdir(),'china-session-quiesce-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
   let context=await openBrowser({root,platform:'boss',headless:true});t.after(()=>context?.close());
   await context.addCookies(fixtures);
@@ -103,9 +109,15 @@ test('BOSS closes its pages before sampling session cookies at shutdown',async t
   const read=context.cookies.bind(context);
   context.cookies=async()=>{sampledWithPages=context.pages().length;return read();};
   await context.close();context=null;
-  assert.equal(sampledWithPages,0);
+  // Chrome evicts session cookies as soon as the last page closes, so the
+  // sample must be taken while the pages are open. Sampling afterwards silently
+  // dropped exactly the cookies this cache exists to preserve.
+  assert.ok(sampledWithPages>0,'the session must be sampled before its pages close');
   context=await openBrowser({root,platform:'boss',headless:true});
   assert.equal((await context.cookies()).find(c=>c.name==='career_ops_session')?.value,'synthetic-session');
+  // Sampling early must not weaken quiescence: a page still in flight at
+  // shutdown keeps the snapshot ineligible (covered in detail below).
+  await context.close();context=null;
 });
 
 test('an in-flight page keepalive request makes the session snapshot ineligible',async t=>{
