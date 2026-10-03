@@ -42,6 +42,8 @@ Options:
   --headless         无界面采集；首次登录请用 login
   --delay-ms N       两次平台动作的间隔下限（列表页/每个详情页/每次翻页），默认15000，最低15000；
                      规则 1 的限流预算，不是平台风控保证。首个动作不等待
+  --jitter R         每个间隔额外增加的随机比例（规则 1.1），默认 0 即关闭。0.4 表示
+                     15000ms 的下限变成 15000–21000ms。只增不减，声明的下限永远不会被突破
   --timeout-ms N     页面等待预算，默认15000
   --help             显示帮助
 
@@ -59,7 +61,7 @@ export async function main(args=process.argv.slice(2)) {
   const {values:v,positionals}=parseArgs({args,allowPositionals:true,options:{
     help:{type:'boolean'},platform:{type:'string'},query:{type:'string'},'search-url':{type:'string'},
     root:{type:'string'},limit:{type:'string'},pages:{type:'string'},resume:{type:'boolean'},refresh:{type:'boolean'},
-    channel:{type:'string'},headless:{type:'boolean'},'delay-ms':{type:'string'},'timeout-ms':{type:'string'},
+    channel:{type:'string'},headless:{type:'boolean'},'delay-ms':{type:'string'},jitter:{type:'string'},'timeout-ms':{type:'string'},
     'browser-driver':{type:'string'},
     file:{type:'string'},'code-root':{type:'string'},
     'market-plan':{type:'string'},'market-pool':{type:'string'},'configuration-hash':{type:'string'},
@@ -73,6 +75,10 @@ export async function main(args=process.argv.slice(2)) {
   const limit=number('limit',v.limit,command==='scan'?5:20,1,command==='scan'?50:500);
   const maxPages=number('pages',v.pages,1,1,20);
   const delayMs=number('delay-ms',v['delay-ms'],15000,15000,60000);
+  // 规则 1.1. Accepted as a ratio so it reads as "a share of the interval" rather
+  // than a second unit the operator has to convert. Clamped inside the limiter,
+  // so an out-of-range value here is not an error worth failing a run over.
+  const jitterRatio=number('jitter',v.jitter,0,0,1);
   const timeoutMs=number('timeout-ms',v['timeout-ms'],15000,1000,60000);
   const channel=v.channel||'chrome';
   if(!['chrome','chromium','msedge'].includes(channel)) throw new Error('channel must be chrome, chromium or msedge');
@@ -144,7 +150,7 @@ export async function main(args=process.argv.slice(2)) {
   // actions, not just the driver's page-readiness wait. Passing it into a single
   // limiter instance means the listing page, every detail view and every page
   // turn share one clock instead of each resetting it.
-  const limiter=createRateLimiter({platform,intervalMs:delayMs});
+  const limiter=createRateLimiter({platform,intervalMs:delayMs,jitterRatio});
   // Collector validation (including resume policy identity) precedes browser startup.
   let driver;
   const deferredDriver={

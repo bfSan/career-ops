@@ -114,6 +114,87 @@ test('猎聘 keeps a zero challenge cooldown — its captcha is not walkable', (
   assert.equal(CHALLENGE_COOLDOWN_MS.boss, 15_000);
 });
 
+test('jitter widens a paid gap without ever undercutting the floor', async () => {
+  // 规则 1.1: a fixed cadence is a signature in itself. random()=0 is the
+  // smallest possible draw, so the gap is exactly the floor — the budget the
+  // operator declared is a floor, not an average.
+  const c = mkClock();
+  const rl = createRateLimiter({
+    platform: 'boss', intervalMs: 15_000, jitterRatio: 0.4,
+    random: () => 0, now: c.now, sleep: c.sleep,
+  });
+  await rl.wait();
+  c.advance(1_000);
+  assert.equal(await rl.wait(), 14_000, 'a zero draw leaves the declared floor intact');
+});
+
+test('jitter never exceeds the ratio, and differs between gaps', async () => {
+  const c = mkClock();
+  // A fixed draw per limiter would make the cadence perfectly reproducible,
+  // which is the thing jitter exists to prevent. Drawing per gap has to vary.
+  const draws = [0, 0.5, 1];
+  let i = 0;
+  const rl = createRateLimiter({
+    platform: 'boss', intervalMs: 10_000, jitterRatio: 0.5,
+    random: () => draws[i++ % draws.length], now: c.now, sleep: c.sleep,
+  });
+  // intervalMs 10000, so each gap owes 1000 after 9s of work, and jitter is
+  // floor(draw × 0.5 × 10000): 0 → +0, 0.5 → +2500, 1 → +5000.
+  await rl.wait();                       // first: free
+  c.advance(9_000);
+  assert.equal(await rl.wait(), 1_000, '0 draw → floor only');
+  c.advance(9_000);
+  assert.equal(await rl.wait(), 3_500, '0.5 draw → floor + half the jitter span');
+  c.advance(9_000);
+  assert.equal(await rl.wait(), 6_000, '1 draw → floor + the whole jitter span');
+});
+
+test('jitter does not delay an action that owes no gap', async () => {
+  const c = mkClock();
+  const rl = createRateLimiter({
+    platform: 'boss', intervalMs: 15_000, jitterRatio: 0.4,
+    random: () => 0.99, now: c.now, sleep: c.sleep,
+  });
+  assert.equal(await rl.wait(), 0, 'the first action stays free');
+  c.advance(30_000);                     // far past any gap
+  assert.equal(await rl.wait(), 0, 'an idle run must not wait before acting');
+  assert.deepEqual(c.sleeps, []);
+});
+
+test('a challenge cooldown is jittered too — the wait itself is a signature', async () => {
+  const c = mkClock();
+  const rl = createRateLimiter({
+    platform: 'boss', intervalMs: 15_000, challengeCooldownMs: 15_000,
+    jitterRatio: 0.4, random: () => 0.5, now: c.now, sleep: c.sleep,
+  });
+  await rl.wait();
+  c.advance(1_000);
+  rl.noteChallenge();
+  // The cooldown is the full 15s from now, which already exceeds the interval's
+  // 14s remainder, so it wins — then jitter adds floor(0.5 × 0.4 × 15000).
+  assert.equal(await rl.wait(), 15_000 + 3_000);
+});
+
+test('a nonsensical jitter value falls back to the floor rather than failing', () => {
+  // Refusing the collection over a number in the wrong range would be worse than
+  // running with no jitter: the floor is what protects the account.
+  // A negative or unparseable value is not a budget question, it is a typo:
+  // it must land on "no jitter" so the floor is exactly what the operator
+  // declared. An oversized one clamps to the maximum rather than growing
+  // without bound.
+  for (const jitterRatio of [-1, NaN, 'x', null]) {
+    const rl = createRateLimiter({ platform: 'boss', jitterRatio });
+    assert.equal(rl.jitterRatio, 0, `jitter=${jitterRatio} must not widen the gap`);
+  }
+  for (const jitterRatio of [3, 99]) {
+    const rl = createRateLimiter({ platform: 'boss', jitterRatio });
+    assert.equal(rl.jitterRatio, 1, `jitter=${jitterRatio} must clamp to the maximum`);
+  }
+  // Omitting it entirely takes the default, which is off: a run that did not
+  // ask for unpredictability should not get it silently.
+  assert.equal(createRateLimiter({ platform: 'boss' }).jitterRatio, 0);
+});
+
 test('an unknown platform falls back to the shared default', () => {
   const rl = createRateLimiter({ platform: 'unknown-board' });
   assert.equal(rl.intervalMs, DEFAULT_ACTION_INTERVAL_MS);
