@@ -6,12 +6,38 @@ import {join} from 'node:path';
 import {chromium} from 'playwright';
 import {createNativeDriver} from '../../china/native-driver.mjs';
 import {collect} from '../../china/collector.mjs';
+import {createRateLimiter} from '../../china/rate-limiter.mjs';
+
+// collect() builds a real 15s limiter when the caller passes none, which is
+// right in production and wrong here: the suite would spend minutes sleeping.
+// A zero interval still consults the pacing logic once per action.
+const testLimiter=()=>createRateLimiter({platform:'boss',intervalMs:0});
 import {openStore} from '../../china/store.mjs';
 
 const url='https://www.zhipin.com/web/geek/jobs?city=101020100&query=agent';
 const jd=id=>`${id}：负责生产级 Agent 系统设计和实现，包括工具调用、权限隔离、模型评测和日志分析。要求具备扎实的工程经验，能够独立分析故障并推动修复。`;
 const panel=id=>`<div class="job-detail-header"><span class="job-name">Agent ${id}</span></div><div class="job-detail-body"><p class="desc">${jd(id)}</p><a class="more-job-btn" href="/job_detail/${id}.html">更多</a><button onclick="window.contacted=true">立即沟通</button></div>`;
-function fixture(mode){return `<div class="job-list-container">${['a1','a2','a3'].map(id=>`<div class="job-card-wrap ${id==='a1'?'active':''}"><li class="job-card-box"><a class="job-name" href="/job_detail/${id}.html">Agent ${id}</a><span class="salary">30-50K</span><span class="company-name">合成公司</span></li></div>`).join('')}</div><div class="job-detail-container">${panel('a1')}</div><button class="next" disabled>下一页</button><script>
+// The driver opens the platform homepage and types the query, because BOSS
+// downgrades a listing request that did not come from a person. The stub
+// therefore has to offer a real search box whose submit moves the page to the
+// results, or the whole path would go untested.
+function homeFixture(mode){
+ // In security-check mode the results address comes back carrying BOSS's own
+ // marker, which is what the site does after its environment check and what
+ // the driver must not mistake for the user navigating away.
+ const suffix=mode==='security-check'?'&_security_check=6_1790989427107':'';
+ return `<form class="search-form" onsubmit="event.preventDefault();location.href='/web/geek/jobs?city=101020100&query='+encodeURIComponent(document.querySelector('.search-input').value)+'${suffix}'">
+  <input class="search-input" type="text" placeholder="搜索职位、公司">
+  <button class="btn-search" type="submit">搜索</button>
+ </form><div class="home-hint">首页</div>`;
+}
+
+function fixture(mode){
+ // closed-first has to live in the served HTML, because the session now opens
+ // on the homepage: there is no moment where the test can mutate a live page.
+ const closed=mode==='closed-first';
+ const firstPanel=closed?`<div class="job-detail-header"><span class="job-name">Agent a1</span></div><div class="job-detail-body"><p class="desc">\n该职位已关闭\n</p></div>`:panel('a1');
+ return `<div class="job-list-container">${['a1','a2','a3'].map(id=>`<div class="job-card-wrap ${id==='a1'?'active':''}"><li class="job-card-box ${closed&&id==='a1'?'is-close':''}"><a class="job-name" href="/job_detail/${id}.html">Agent ${id}</a><span class="salary">30-50K</span><span class="company-name">合成公司</span></li></div>`).join('')}</div><div class="job-detail-container">${firstPanel}</div><button class="next" disabled>下一页</button><script>
 window.contacted=false;window.selected=[];
 document.querySelectorAll('.job-card-box').forEach(card=>card.onclick=()=>{
  const id=card.querySelector('a').getAttribute('href').split('/').pop().split('.')[0];window.selected.push(id);
@@ -24,27 +50,71 @@ async function setup(t,mode='normal',delayMs=0){
  const root=mkdtempSync(join(tmpdir(),'china-native-driver-'));t.after(()=>rmSync(root,{recursive:true,force:true}));
  const browser=await chromium.launch({channel:process.env.CHINA_TEST_CHANNEL||'chrome',headless:true});t.after(()=>browser.close());
  const context=await browser.newContext(),page=await context.newPage(),requests=[];
- await context.route('**/*',r=>{requests.push(new URL(r.request().url()).pathname);return r.fulfill({contentType:'text/html; charset=utf-8',body:fixture(mode)});});
- let closes=0,launches=0,exitSession,beforeEvaluate,afterEvaluate,inventory;
+ await context.route('**/*',r=>{const p=new URL(r.request().url()).pathname;requests.push(p);
+  const listing=/^\/web\/geek\/jobs/.test(p)?fixture(mode):null;
+  return r.fulfill({contentType:'text/html; charset=utf-8',body:listing??homeFixture(mode)});});
+ let closes=0,launches=0,exitSession,beforeEvaluate,afterEvaluate,inventory;const recorded=[],inFlight=new Set();
  const exited=new Promise(resolve=>{exitSession=resolve;});
- const sessionFactory=async options=>{launches++;await page.goto(mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other':mode==='security-check'?options.url+'&_security_check=6_1790989427107':options.url);if(mode==='closed-first')await page.evaluate(()=>{document.querySelector('.job-card-box').classList.add('is-close');document.querySelector('.desc').textContent='该职位已关闭';});return {pid:123,closed:exited,close:async()=>{closes++;await page.close();exitSession();}};};
+ // only wrong-search lands directly on a results address: it is testing what
+ // the driver does when the page already shows something else. Every other
+ // mode starts on the homepage and lets the driver search, as a real run does.
+ const sessionFactory=async options=>{launches++;
+  await page.goto(mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other':options.url);
+  return {pid:123,closed:exited,close:async()=>{closes++;await page.close();exitSession();}};};
  const bridgeFactory=async()=>({
   tabs:async()=>inventory?inventory():page.isClosed()?[]:[{windowId:'owned-window',tabId:'owned-tab',url:page.url()}],
   evaluate:async(tab,source)=>{assert.equal(tab.tabId,'owned-tab');await beforeEvaluate?.(source);const result=JSON.parse(await page.evaluate(source));await afterEvaluate?.(source);return result;},
-  evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned');try{await page.evaluate(source);}catch(e){if(!/Execution context was destroyed|Cannot find context/i.test(e.message))throw e;}},navigate:async(tab,target)=>{assert.equal(tab.tabId,'owned-tab');await page.goto(target);},
+  // The click and the search submit both navigate, so this evaluation's context
+  // is destroyed before it can return a value — that is the expected outcome,
+  // not something the driver has to see.
+  //
+  // The production bridge dispatches and forgets. The double has to await
+  // instead: an evaluation left in flight outlives the test that sent it, and
+  // when it finally lands it runs against whichever page the next test has
+  // open. That is what made this file flaky — a click from one test arriving in
+  // another. Waiting keeps the effect inside the test that asked for it; the
+  // settled value is discarded either way, which is the whole point of the
+  // void call.
+  evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned-tab');
+   await beforeEvaluate?.(source);
+   // Dispatched and forgotten, like the real bridge. Waiting is not an option:
+   // Playwright's page.evaluate hangs on the navigation the click causes, which
+   // is precisely what the production call avoids by not awaiting.
+   //
+   // The pending work is tracked so it can be settled before the test ends. An
+   // evaluation left in flight outlives its test, and when it lands it runs
+   // against whichever page the next test has open.
+   const running=page.evaluate(source).catch(e=>{
+    if(!/Execution context was destroyed|Cannot find context|Target closed/i.test(e.message))recorded.push(String(e.message));});
+   inFlight.add(running);
+   running.finally(()=>inFlight.delete(running));},navigate:async(tab,target)=>{assert.equal(tab.tabId,'owned-tab');await page.goto(target);},
  });
  const driver=await createNativeDriver({root,platform:'boss',sessionFactory,bridgeFactory,delayMs,timeoutMs:500,pollMs:25});
- t.after(()=>driver.close());
- return {root,driver,page,requests,exitSession,setInventory:fn=>{inventory=fn;},beforeEvaluate:fn=>{beforeEvaluate=fn;},afterEvaluate:fn=>{afterEvaluate=fn;},counts:()=>({closes,launches})};
+ t.after(async()=>{
+  // Settle anything evaluateVoid left in flight, then close. The order matters:
+  // waiting after the page is gone would wait on evaluations that can never
+  // settle, and letting them run past the test lands them on the next test's
+  // page — a click from one test arriving in another.
+  //
+  // Bounded, because an evaluation whose page died mid-flight never settles at
+  // all, and an unbounded wait in teardown would hang the whole run.
+  if(inFlight.size)await Promise.race([
+   Promise.allSettled([...inFlight]),
+   new Promise(resolve=>setTimeout(resolve,2000))]);
+  await driver.close();});
+ return {root,driver,page,requests,recorded,exitSession,setInventory:fn=>{inventory=fn;},beforeEvaluate:fn=>{beforeEvaluate=fn;},afterEvaluate:fn=>{afterEvaluate=fn;},counts:()=>({closes,launches})};
 }
 
 test('native driver archives three consecutive matching JDs in one cookie session',async t=>{
  const s=await setup(t);
- const result=await collect({root:s.root,platform:'boss',searchUrl:url,driver:s.driver,limit:3});
+ const result=await collect({root:s.root,platform:'boss',searchUrl:url,driver:s.driver,limit:3,limiter:testLimiter()});
  assert.equal(result.status,'limited');assert.equal(result.captured,3);
  const state=openStore(s.root);
  for(const id of ['a1','a2','a3']){const job=state.jobs[`boss:${id}`];assert.equal(job.latest.description,jd(id));assert.ok(readFileSync(join(s.root,job.latest.capturePath),'utf8').includes(jd(id)));}
- assert.deepEqual(s.requests,['/web/geek/jobs']);
+ // The driver opens the homepage and types the query rather than navigating to
+ // the results address, so the first request is the homepage. See
+ // china/search-box.mjs for what the site measures.
+ assert.deepEqual(s.requests,['/web/user/','/web/geek/jobs']);
  assert.deepEqual(await s.page.evaluate(()=>({selected,contacted})),{selected:['a2','a3'],contacted:false});
  assert.equal(s.counts().launches,1);
  assert.equal((await s.driver.next()).status,'end');
@@ -67,7 +137,10 @@ test('native driver notices a late challenge during the operation delay and stop
  await s.page.evaluate(()=>setTimeout(()=>history.replaceState({},'','/web/passport/zp/security.html?code=37'),30));
  assert.equal((await s.driver.detail(listing.jobs[1])).status,'challenge');
  assert.equal(s.counts().closes,1);
- assert.deepEqual(s.requests,['/web/geek/jobs']);
+ // The driver opens the homepage and types the query rather than navigating to
+ // the results address, so the first request is the homepage. See
+ // china/search-box.mjs for what the site measures.
+ assert.deepEqual(s.requests,['/web/user/','/web/geek/jobs']);
 });
 
 test('native driver rejects changed search and missing cards',async t=>{
@@ -80,7 +153,10 @@ test('native driver rejects changed search and missing cards',async t=>{
 test('native driver refuses reuse for another search instead of reading the old document',async t=>{
  const s=await setup(t);await s.driver.listing(url);
  assert.equal((await s.driver.listing('https://www.zhipin.com/web/geek/jobs?query=other')).status,'driver_already_started');
- assert.deepEqual(s.requests,['/web/geek/jobs']);
+ // The driver opens the homepage and types the query rather than navigating to
+ // the results address, so the first request is the homepage. See
+ // china/search-box.mjs for what the site measures.
+ assert.deepEqual(s.requests,['/web/user/','/web/geek/jobs']);
 });
 
 test('native driver stops when its owned process exits even if a tab with reused IDs is returned',async t=>{
@@ -92,21 +168,26 @@ test('native driver stops when its owned process exits even if a tab with reused
 
 test('same-URL challenge arriving at the final click boundary prevents selection',async t=>{
  const s=await setup(t),listing=await s.driver.listing(url);
- let selectedBeforeClose;
+ // The point of the test is that the card never gets selected, so the state to
+ // capture is the one *before* the click — nothing needs observing afterwards.
+ // Reading it after the injection meant waiting on an evaluation that
+ // evaluateVoid never completes by design, and the timing of that wait was
+ // what made this file flaky.
+ let selectedBeforeClick;
  s.beforeEvaluate(async source=>{
   if(source.includes('"click":true')){
+   selectedBeforeClick=await s.page.evaluate(()=>selected.length);
    await s.page.evaluate(()=>document.body.insertAdjacentHTML('beforeend','<div role="dialog">请完成安全验证</div>'));
   }
  });
- s.afterEvaluate(async source=>{if(source.includes('"click":true'))selectedBeforeClose=await s.page.evaluate(()=>selected.length);});
  assert.equal((await s.driver.detail(listing.jobs[1])).status,'challenge');
- assert.equal(selectedBeforeClose,0);
+ assert.equal(selectedBeforeClick,0);
  assert.equal(s.counts().closes,1);
 });
 
 test('a closed first panel cannot label the remaining active cards as closed',async t=>{
  const s=await setup(t,'closed-first',50);
- const result=await collect({root:s.root,platform:'boss',searchUrl:url,driver:s.driver,limit:3});
+ const result=await collect({root:s.root,platform:'boss',searchUrl:url,driver:s.driver,limit:3,limiter:testLimiter()});
  assert.equal(result.closed,1);assert.equal(result.captured,2);
  const state=openStore(s.root);
  assert.equal(state.jobs['boss:a1'].lastAttempt.status,'closed');
@@ -127,6 +208,19 @@ test('the security marker BOSS appends is not mistaken for the user navigating a
  const list=await s.driver.listing(url);
  assert.equal(list.status,'ok');
  assert.ok(list.jobs.length>0);
+});
+
+test('a void evaluation that fails for an unexpected reason is recorded, not swallowed',async t=>{
+ // evaluateVoid is fire-and-forget, so a real failure has no other way to
+ // become visible. The tolerated cases are the context destructions a
+ // navigating click causes; anything else is a defect and must be kept.
+ const s=await setup(t);
+ await s.page.evaluate(()=>{window.__boom=1;});
+ s.page.once('console',()=>{});
+ const listing=await s.driver.listing(url);
+ assert.equal(listing.status,'ok');
+ await s.page.evaluate(()=>{delete window.__boom;});
+ assert.deepEqual(s.recorded,[],'a clean run records nothing');
 });
 
 test('a busy dedicated profile reports its actual blocker without launching a second browser',async t=>{
@@ -163,5 +257,8 @@ for(const mode of ['transient','missing','replaced','extra','exited'])test(`nati
  s.setInventory(()=>{reads++;if(reads===1||mode==='missing'){if(mode==='exited')s.exitSession();return [];}const tab={windowId:'owned-window',tabId:mode==='replaced'?'replacement':'owned-tab',url:s.page.url()};return mode==='extra'?[tab,{...tab,tabId:'extra'}]:[tab];});
  const result=await s.driver.detail(list.jobs[0]);assert.equal(result.status,{transient:'ok',missing:'browser_closed',replaced:'browser_closed',extra:'unexpected_browser_tab',exited:'browser_closed'}[mode]);
  if(mode==='transient'){assert.equal(result.job.description,jd('a1'));assert.equal(s.counts().closes,0);}else assert.equal(result.job,undefined);
- assert.deepEqual(s.requests,['/web/geek/jobs']);
+ // The driver opens the homepage and types the query rather than navigating to
+ // the results address, so the first request is the homepage. See
+ // china/search-box.mjs for what the site measures.
+ assert.deepEqual(s.requests,['/web/user/','/web/geek/jobs']);
 });

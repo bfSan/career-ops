@@ -2,7 +2,8 @@ import {createNativeLiepinDriver} from './native-liepin-driver.mjs';
 import {createNativePageDriver} from './native-page-driver.mjs';
 import {openNativeLogin} from './native-login.mjs';
 import {createCdpBridge} from './cdp-bridge.mjs';
-import {extractPage,validateSearchUrl,jobIdentity} from './platforms.mjs';
+import {extractPage,validateSearchUrl,jobIdentity,loginUrl} from './platforms.mjs';
+import {findSearchBox,fillSearchBox,submitSearch} from './search-box.mjs';
 import {normalizeSalary,loadNativeSalaryFont} from './salary.mjs';
 
 // This function is serialized into Chrome's Apple Events isolated world.
@@ -45,6 +46,13 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
   const fontAttempts=new Set();let fonts=[];const requests=[];
   if(platform!=='boss'||channel!=='chrome')throw new Error('Native scanning currently supports BOSS with Chrome only');
   let session,bridge,tab,blocked,closing,search='',requestedSearch='',lastSignature='',challengeDeadline=null,challengeSeen=false,challengeSettled=false;
+  // The one address the tab is allowed to sit on before the search runs.
+  // Narrower than "anything that is not a results address": that would also
+  // admit a stray navigation, and the check exists precisely to catch one.
+  // loginUrl already names the homepage per platform, so this stays in step
+  // with where the session was actually opened.
+  const homeUrl=new URL(loginUrl('boss')).href;
+  const isHomeAddress=value=>{try{return new URL(value).href===homeUrl;}catch{return false;}};
   const searchKey=value=>{
     const url=new URL(validateSearchUrl('boss',value));
     // BOSS adds this documented-in-session return marker after its own check.
@@ -100,6 +108,15 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
     // Reaching a usable URL means the one permitted check is definitively over.
     if(challengeSeen)challengeSettled=true;
     challengeDeadline=null;
+    // Before the search has run, the tab is legitimately on the platform
+    // homepage — the driver opens it there and types the query, because BOSS
+    // downgrades a listing address that did not come from a person (measured
+    // 2026-10-02: /web/geek/jobs?query=… by address bar returns / with zero
+    // cards, the same query typed into the field returns the listing).
+    // validateSearchUrl rejects that address by design, so the check below has
+    // to admit it while search is still empty — and only that address, so a
+    // user navigating somewhere else is still caught.
+    if(!search&&isHomeAddress(live.url))return {status:'ok',url:live.url};
     let value;try{value=validateSearchUrl('boss',live.url);}catch{return stop('navigation_changed');}
     // Both branches compare through searchKey. BOSS appends _security_check to
     // the address after its own check, and that is the platform marking its
@@ -110,6 +127,20 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
     if(searchKey(value)!==requestedSearch)return stop('navigation_changed');
     challengeDeadline=null;
     return {status:'ok',url:live.url};
+  };
+  // Type the query into the homepage search box and press the button, then read
+  // the listing that arrives. The submission goes through the fire-and-forget
+  // evaluation because it navigates and the context dies before anything could
+  // be marshalled back; the listing itself is observed by the following read.
+  const searchFromHome=async query=>{
+   if(!query)return stop('search_query_missing');
+   const found=await bridge.evaluate(tab,`JSON.stringify((${findSearchBox.toString()})({platform:'boss',query:${JSON.stringify(query)}}))`);
+   if(found.status!=='found')return stop('search_box_unavailable');
+   const filled=await bridge.evaluate(tab,`JSON.stringify((${fillSearchBox.toString()})({index:${found.field},query:${JSON.stringify(query)}}))`);
+   if(filled.status!=='filled')return stop('search_box_unavailable');
+   const run=bridge.evaluateVoid||((t,src)=>bridge.evaluate(t,src));
+   await run(tab,`(${submitSearch.toString()})({index:${found.submit===null?'null':found.submit}})`);
+   return await read('listing');
   };
   const evaluate=async(fn,args)=>{
     const state=await current();if(state.status!=='ok')return state;
@@ -198,12 +229,16 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
       // driver using the same profile; never race setURL against an old DOM.
       if(session)return stop('driver_already_started');
       requestedSearch=searchKey(url);
+      const query=new URL(url).searchParams.get('query')||'';
       const waited=await wait();if(waited.status!=='ok')return waited;
-      session=await sessionFactory({root,platform:'boss',channel,url});
+      // Open the homepage and search from it, rather than navigating to the
+      // results address. See search-box.mjs for what the site measures.
+      session=await sessionFactory({root,platform:'boss',channel,url:loginUrl('boss',query)});
       session.closed?.then(()=>{if(!closing)blocked||={status:'browser_closed'};});
       bridge=await bridgeFactory({root,session,onEvent});
       onEvent({event:'native_browser_started',platform,debugger:true});
-      let result=await read('listing');
+      let result=await read('state');
+      if(result.status==='ok')result=await searchFromHome(query);
       if(result.status==='ok'){search=validateSearchUrl('boss',result.url);lastSignature=signature(result);}
       for(let i=0;i<pageIndex&&result.status==='ok';i++)result=await next();
       return result;
