@@ -135,6 +135,24 @@ export async function createCdpBridge({root,session,onEvent=()=>{},startupTimeou
       const socket=await socketFor(tab.tabId);
       await socket.send('Page.navigate',{url});
     },
+    // Fire-and-forget evaluation, for scripts that navigate as a side effect.
+    // evaluate() cannot serve those: a click destroys the execution context
+    // before Runtime.evaluate can marshal a value back, which the caller would
+    // see as an exception rather than as the action it asked for. This variant
+    // still reports a synchronous throw, but treats the context dying after a
+    // successful dispatch as the expected outcome rather than a failure.
+    evaluateVoid:async(tab,source)=>{
+      const socket=await socketFor(tab.tabId);
+      try{
+        const result=await socket.send('Runtime.evaluate',{expression:source,returnByValue:false,awaitPromise:false});
+        const details=result.exceptionDetails;
+        if(details)throw fail(`Evaluation threw: ${details.exception?.description??details.text??'unknown'}`,'extraction_failed');
+      }catch(error){
+        // Only a destroyed context is forgiven — it means the script ran and
+        // navigated. Any other transport or evaluation error is real.
+        if(!/Execution context was destroyed|Cannot find context/i.test(error.message))throw error;
+      }
+    },
     close:()=>{for(const socket of sockets.values())socket.close();sockets.clear();},
   };
 }

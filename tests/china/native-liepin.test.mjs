@@ -8,13 +8,17 @@ async function setup(t,mode='normal'){
  await page.route('**/*',r=>{const p=new URL(r.request().url()).pathname;requests.push(p);return r.fulfill({contentType:'text/html; charset=utf-8',body:p==='/zhaopin/'?'<li class="job-card-wrapper"><a href="/job/101.shtml">AI工程师</a><span class="company-name">测试</span></li><li class="job-card-wrapper"><a href="/job/102.shtml">AI工程师</a></li>':mode==='login'?'<p>扫码登录</p>':mode==='challenge'?'<p>请完成安全验证</p>':`${mode==='wrong-id'?'<script>history.replaceState(null,"","/job/999.shtml")</script>':''}${mode==='short'&&p==='/job/101.shtml'?'<div class="job-apply-container"><h1>AI工程师</h1></div><div class="job-intro-container"><div data-selector="job-intro-content">通过应用AI帮助企业各个环节提效</div></div>':`<h1>AI工程师</h1><div class="job-description">${jd}${p}</div>`}<button onclick="window.contacted=true">立即投递</button><script>window.contacted=false</script>`});});
  let launches=0,closes=0,tabReads=0,inventory;const driver=await createNativeDriver({root,platform:'liepin',delayMs:0,timeoutMs:500,pollMs:20,
   sessionFactory:async o=>{launches++;await page.goto(o.url);return {closed:new Promise(()=>{}),close:async()=>{closes++;}};},
-  bridgeFactory:async()=>({tabs:async()=>{tabReads++;if(inventory)return inventory();return mode==='startup'&&tabReads<=2?[]:[{windowId:'owned',tabId:'owned',url:mode==='startup'&&tabReads===3?'about:blank':page.url()}];},evaluate:async(tab,source)=>{assert.equal(tab.tabId,'owned');return JSON.parse(await page.evaluate(source));},navigate:async(tab,url)=>{assert.equal(tab.tabId,'owned');if(mode==='old-document')await page.evaluate(url=>history.replaceState(null,'',url),url);else await page.goto(url);}})});t.after(()=>driver.close());
+  bridgeFactory:async()=>({tabs:async()=>{tabReads++;if(inventory)return inventory();return mode==='startup'&&tabReads<=2?[]:[{windowId:'owned',tabId:'owned',url:mode==='startup'&&tabReads===3?'about:blank':page.url()}];},evaluate:async(tab,source)=>{assert.equal(tab.tabId,'owned');return JSON.parse(await page.evaluate(source));},evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned');page.evaluate(source).catch(e=>{if(!/Execution context was destroyed|Cannot find context|Target closed/i.test(e.message))throw e;});},navigate:async(tab,url)=>{assert.equal(tab.tabId,'owned');if(mode==='old-document')await page.evaluate(url=>history.replaceState(null,'',url),url);else await page.goto(url);}})});t.after(()=>driver.close());
  return {root,page,driver,requests,setInventory:fn=>{inventory=fn;},counts:()=>({launches,closes})};
 }
 test('native Liepin keeps one cookie session and archives two identity-bound JDs without clicking apply',async t=>{
  const s=await setup(t);const result=await collect({root:s.root,platform:'liepin',searchUrl:search,limit:2,driver:s.driver});
  assert.equal(result.captured,2);assert.equal(s.counts().launches,1);assert.equal(await s.page.evaluate(()=>window.contacted),false);
- assert.deepEqual(s.requests,['/zhaopin/','/job/101.shtml','/job/102.shtml']);
+ // Between two job pages the driver returns to the listing so the next card is
+ // clickable again — the click-through leaves the tab on the job page, and
+ // 猎聘 only serves a job page reached from a listing. That hop is part of the
+ // contract now, so it is asserted rather than tolerated.
+ assert.deepEqual(s.requests,['/zhaopin/','/job/101.shtml','/zhaopin/','/job/102.shtml']);
  assert.ok(openStore(s.root).jobs['liepin:job-102'].latest.description.endsWith('/job/102.shtml'));
 });
 for(const [mode,status] of [['login','login_required'],['challenge','challenge'],['wrong-id','identity_mismatch']])test(`native Liepin ${mode} stops before remaining jobs`,async t=>{

@@ -19,7 +19,7 @@ for(const platform of ['boss','liepin']){
         // Chrome's address bar can lead the committed document during launch.
         tabs:async()=>[{windowId:'owned',tabId:'owned',url:first||!commit?search:page.url()}],
         evaluate:async(_tab,source)=>{const result=JSON.parse(await page.evaluate(source));if(first&&commit){first=false;await page.goto(search);}return result;},
-        navigate:async(_tab,url)=>{navigations++;await page.goto(url);},
+        evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned');try{await page.evaluate(source);}catch(e){if(!/Execution context was destroyed|Cannot find context/i.test(e.message))throw e;}},navigate:async(_tab,url)=>{navigations++;await page.goto(url);},
       }),
     });t.after(()=>driver.close());
     return {driver,page,search,counts:()=>({launches,navigations,closes})};

@@ -3,6 +3,7 @@ import {openNativeLogin} from './native-login.mjs';
 import {createCdpBridge} from './cdp-bridge.mjs';
 import {extractPage,jobIdentity,validateSearchUrl,platformUrl} from './platforms.mjs';
 import {expandDescription} from './detail-controls.mjs';
+import {findCard,clickCard} from './card-click.mjs';
 
 // Standalone detail pages share this lifecycle; BOSS retains its panel driver.
 export async function createNativePageDriver({root,platform='liepin',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=createCdpBridge}) {
@@ -60,7 +61,17 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
   let lastStatus='extraction_failed';
   do{
    const state=await current();if(state.status==='starting'){await pause(pollMs);continue;}if(state.status!=='ok')return state;
-   const result=await evaluate(kind);
+   // A navigation in flight destroys the context this would run in, and the
+   // read is not wrong — it is early. The loop below already retries until the
+   // timeout, so catching it here is the same bounded wait without charging
+   // the run a spurious network_error. Only a destroyed context is forgiven;
+   // every other evaluation failure still propagates.
+   let result;
+   try{result=await evaluate(kind);}
+   catch(error){
+    if(navigating&&/Execution context was destroyed|Cannot find context/i.test(error.message)){await pause(pollMs);continue;}
+    throw error;
+   }
    lastStatus=result.status;
    if(['challenge','login_required'].includes(result.status))return stop(result.status);
    // Chrome may expose the requested address before its first document commits.
@@ -81,6 +92,10 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    if(kind==='listing'&&result.status==='ok'&&previousSignature&&signature(result)===previousSignature){await pause(pollMs);continue;}
    if(result.status==='ok'||result.status==='closed'||result.status==='empty'||result.status==='source_insufficient'){
     boundUrl=result.documentUrl;
+     // The document now being read, so a later click can tell a fresh document
+     // from this one without re-sampling — a fresh evaluation races the
+     // tail of the previous navigation and dies on a destroyed context.
+     previousOrigin=result.timeOrigin;
     if(kind==='listing'){if(result.status==='ok')remember(result);return result;}
     return result.status==='closed'?{...result,boundUrl:expected.url}:{...result,job:{...result.job,url:expected.url}};
    }
@@ -93,8 +108,38 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
   }
  }
  async function navigate(url,kind,expected,previousSignature=''){
-  const before=await evaluate('state');previousOrigin=before.timeOrigin;previousUrl=before.documentUrl;navigating=true;
+  // previousOrigin already describes the document being left: read() refreshes
+  // it on every successful read. Re-sampling here would race the tail of the
+  // last navigation and can die on a destroyed context instead of navigating.
+  previousUrl=boundUrl;navigating=true;
   try{await bridge.navigate(tab,url);return await read(kind,expected,previousSignature);}finally{navigating=false;}
+ }
+ // 猎聘 only serves a job page when the arrival looks like it came from the
+ // results list, so the card is clicked rather than navigated to. See
+ // china/card-click.mjs for what the site actually keys on.
+ //
+ // Locating and clicking are separate evaluations on purpose: a script that
+ // clicks and returns in one call is destroyed by the navigation its own click
+ // causes, and the driver only sees the resulting exception.
+ async function clickThrough(url,kind,expected){
+  // previousOrigin/previousUrl come from the listing we are already standing
+  // on — boundUrl and the last read recorded them. Re-sampling the document
+  // here would be a fresh evaluation racing the tail of the previous
+  // navigation, and read() already compares timeOrigin against previousOrigin
+  // to tell a new document from the old one.
+  previousUrl=boundUrl;navigating=true;
+  try{
+   const found=await bridge.evaluate(tab,`JSON.stringify((${findCard.toString()})({platform:${JSON.stringify(platform)},url:${JSON.stringify(url)}}))`);
+   if(found.status==='closed')return stop('closed');
+   // Ambiguous and not-found are extraction failures, not page verdicts: the
+   // listing could not be trusted to name the job that was asked for.
+   if(found.status!=='found')return stop('extraction_failed');
+   // Fire-and-forget: the click navigates, so its context dies before any
+   // value could be marshalled back. read() below observes the arrival.
+   const run=bridge.evaluateVoid||((t,src)=>bridge.evaluate(t,src));
+   await run(tab,`(${clickCard.toString()})({index:${found.index}})`);
+   return await read(kind,expected);
+  }finally{navigating=false;}
  }
  const safe=fn=>async(...args)=>{if(blocked)return blocked;try{return await fn(...args);}catch(error){onEvent({event:'native_browser_error',platform,status:error.status||'network_error',bridgeErrorCode:error.bridgeErrorCode??null,bridgeErrorStage:error.bridgeErrorStage??null,message:error.message});return stop(error.status||'network_error');}};
  const next=safe(async()=>{
@@ -133,7 +178,23 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    if(!observed||observed.title!==card.title)return stop('identity_mismatch');
    const waited=await wait();if(waited.status!=='ok')return waited;
    const state=await current();if(state.status!=='ok')return state;
-   return navigate(observed.url,'detail',expected);
+   // A click-through leaves the tab on the job page, so the next card is out
+   // of reach until the listing is back. Navigating to listUrl is enough: it
+   // is the listing's own address, session query included, which is what the
+   // next click needs. next() already restores the listing the same way after
+   // a page turn, and the signature check keeps a silently-changed listing
+   // from being mistaken for the one the run approved.
+   if(platform==='liepin'&&boundUrl&&boundUrl!==listUrl){
+    const saved=lastSignature,restored=await navigate(listUrl,'listing',listUrl);
+    if(restored.status!=='ok')return restored;
+    if(lastSignature!==saved)return stop('resume_page_changed');
+    const gap=await wait();if(gap.status!=='ok')return gap;
+   }
+   // 猎聘 ties a job page to the list it was reached from, so it is clicked
+   // through. LinkedIn's detail URLs carry no such binding and still navigate.
+   return platform==='liepin'
+    ?clickThrough(observed.url,'detail',expected)
+    :navigate(observed.url,'detail',expected);
   }),next,close,
  };
 }

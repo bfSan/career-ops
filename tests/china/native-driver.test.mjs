@@ -31,7 +31,7 @@ async function setup(t,mode='normal',delayMs=0){
  const bridgeFactory=async()=>({
   tabs:async()=>inventory?inventory():page.isClosed()?[]:[{windowId:'owned-window',tabId:'owned-tab',url:page.url()}],
   evaluate:async(tab,source)=>{assert.equal(tab.tabId,'owned-tab');await beforeEvaluate?.(source);const result=JSON.parse(await page.evaluate(source));await afterEvaluate?.(source);return result;},
-  navigate:async(tab,target)=>{assert.equal(tab.tabId,'owned-tab');await page.goto(target);},
+  evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned');try{await page.evaluate(source);}catch(e){if(!/Execution context was destroyed|Cannot find context/i.test(e.message))throw e;}},navigate:async(tab,target)=>{assert.equal(tab.tabId,'owned-tab');await page.goto(target);},
  });
  const driver=await createNativeDriver({root,platform:'boss',sessionFactory,bridgeFactory,delayMs,timeoutMs:500,pollMs:25});
  t.after(()=>driver.close());

@@ -35,7 +35,7 @@ async function fixture(t,{nextHref='/zhaopin/?key=AI&dq=020&curPage=1',gate=fals
  });
  const makeDriver=()=>createNativeDriver({root,platform:'liepin',delayMs:0,timeoutMs:600,pollMs:20,
   sessionFactory:async o=>{launches++;await page.goto(o.url);return {closed:new Promise(()=>{}),close:async()=>{}};},
-  bridgeFactory:async()=>({tabs:async()=>[{windowId:'owned',tabId:'owned',url:page.url()}],evaluate:async(_,source)=>JSON.parse(await page.evaluate(source)),navigate:async(_,url)=>page.goto(url)})});
+  bridgeFactory:async()=>({tabs:async()=>[{windowId:'owned',tabId:'owned',url:page.url()}],evaluate:async(_,source)=>JSON.parse(await page.evaluate(source)),evaluateVoid:async(tab,source)=>{assert.equal(tab.tabId,'owned');try{await page.evaluate(source);}catch(e){if(!/Execution context was destroyed|Cannot find context/i.test(e.message))throw e;}},navigate:async(_,url)=>page.goto(url)})});
  return {root,page,requests,makeDriver,launches:()=>launches};
 }
 
