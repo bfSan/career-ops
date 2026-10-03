@@ -46,13 +46,22 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
   const fontAttempts=new Set();let fonts=[];const requests=[];
   if(platform!=='boss'||channel!=='chrome')throw new Error('Native scanning currently supports BOSS with Chrome only');
   let session,bridge,tab,blocked,closing,search='',requestedSearch='',lastSignature='',challengeDeadline=null,challengeSeen=false,challengeSettled=false;
-  // The one address the tab is allowed to sit on before the search runs.
-  // Narrower than "anything that is not a results address": that would also
-  // admit a stray navigation, and the check exists precisely to catch one.
-  // loginUrl already names the homepage per platform, so this stays in step
-  // with where the session was actually opened.
-  const homeUrl=new URL(loginUrl('boss')).href;
-  const isHomeAddress=value=>{try{return new URL(value).href===homeUrl;}catch{return false;}};
+  // The addresses the tab may sit on before the search runs, compared by origin
+  // and path shape rather than by an exact string. BOSS redirects the profile
+  // address the session opens at — /web/user/ comes back as / — so pinning the
+  // exact loginUrl made every run stop at navigation_changed while a usable
+  // search box sat right there on the page.
+  //
+  // Still narrow on purpose: only BOSS itself, and never a results address, a
+  // job page, or the verification pages. "Anything that is not a listing" would
+  // be simpler and worthless — the check exists to catch the tab wandering off,
+  // and a stray navigation to another site would sail straight through it.
+  const isHomeAddress=value=>{
+    let url;try{url=new URL(value);}catch{return false;}
+    if(url.origin!=='https://www.zhipin.com')return false;
+    try{validateSearchUrl('boss',value);return false;}
+    catch{return true;}
+  };
   const searchKey=value=>{
     const url=new URL(validateSearchUrl('boss',value));
     // BOSS adds this documented-in-session return marker after its own check.
@@ -181,12 +190,20 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
     return blocked||{status:'ok'};
   };
   const read=async(kind,expected,previous='')=>{
-    const until=Date.now()+timeoutMs;let result;
+    const until=Date.now()+timeoutMs;let result,transitional=false;
     do{
       result=await evaluate(extractPage,{platform:'boss',kind,expected});
       if(result.status==='ok'&&(!previous||signature(result)!==previous))return result;
       // 'challenge_pending' keeps polling: the check may still be clearing.
-      if(!['ok','extraction_failed','starting','challenge_pending'].includes(result.status))return result;
+      //
+      // 'navigation_changed' does too, but only before the search has run. The
+      // submit navigates, and for a moment the tab reports the old address
+      // against a page that is already committing the new one — reading the
+      // frame mid-flight called that a user navigating away and ended the run.
+      // Once a search is bound there is no such window, so a change after it is
+      // still reported immediately, the way a person leaving the page is.
+      const inFlight=!search&&result.status==='navigation_changed';
+      if(!['ok','extraction_failed','starting','challenge_pending'].includes(result.status)&&!inFlight)return result;
       await pause(pollMs);
       // A clearing security check outlives the ordinary read budget, so while one
       // is pending let the read run to the challenge deadline instead. The bound

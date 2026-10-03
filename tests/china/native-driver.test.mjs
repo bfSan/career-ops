@@ -59,7 +59,13 @@ async function setup(t,mode='normal',delayMs=0){
  // the driver does when the page already shows something else. Every other
  // mode starts on the homepage and lets the driver search, as a real run does.
  const sessionFactory=async options=>{launches++;
-  await page.goto(mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other':options.url);
+  // redirected-home models the platform answering a profile address with a
+  // different one. Stated as the landing address rather than a redirect: a real
+  // 302 would send the page through BOSS's own security flow, which this stub
+  // does not and should not model.
+  const landing=mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other'
+   :mode==='redirected-home'?'https://www.zhipin.com/':null;
+  await page.goto(landing||options.url);
   return {pid:123,closed:exited,close:async()=>{closes++;await page.close();exitSession();}};};
  const bridgeFactory=async()=>({
   tabs:async()=>inventory?inventory():page.isClosed()?[]:[{windowId:'owned-window',tabId:'owned-tab',url:page.url()}],
@@ -192,6 +198,19 @@ test('a closed first panel cannot label the remaining active cards as closed',as
  const state=openStore(s.root);
  assert.equal(state.jobs['boss:a1'].lastAttempt.status,'closed');
  for(const id of ['a2','a3'])assert.equal(state.jobs[`boss:${id}`].latest.description,jd(id));
+});
+
+test('a session the platform answers with a different home address still searches',async t=>{
+ // BOSS does not keep the profile address it is sent: /web/user/ comes back
+ // as /. Matching the exact login address called every run navigation_changed
+ // while a usable search box sat on the page, so the home check compares origin
+ // and shape instead of one string.
+ const s=await setup(t,'redirected-home');
+ const list=await s.driver.listing(url);
+ assert.equal(list.status,'ok');
+ assert.ok(list.jobs.length>0);
+ // The landing address is the one the platform answered with, not the one asked for.
+ assert.deepEqual(s.requests,['/','/web/geek/jobs']);
 });
 
 test('native driver rejects an initial search with different query conditions',async t=>{
