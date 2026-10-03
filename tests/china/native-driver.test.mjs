@@ -27,7 +27,7 @@ async function setup(t,mode='normal',delayMs=0){
  await context.route('**/*',r=>{requests.push(new URL(r.request().url()).pathname);return r.fulfill({contentType:'text/html; charset=utf-8',body:fixture(mode)});});
  let closes=0,launches=0,exitSession,beforeEvaluate,afterEvaluate,inventory;
  const exited=new Promise(resolve=>{exitSession=resolve;});
- const sessionFactory=async options=>{launches++;await page.goto(mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other':options.url);if(mode==='closed-first')await page.evaluate(()=>{document.querySelector('.job-card-box').classList.add('is-close');document.querySelector('.desc').textContent='该职位已关闭';});return {pid:123,closed:exited,close:async()=>{closes++;await page.close();exitSession();}};};
+ const sessionFactory=async options=>{launches++;await page.goto(mode==='wrong-search'?'https://www.zhipin.com/web/geek/jobs?query=other':mode==='security-check'?options.url+'&_security_check=6_1790989427107':options.url);if(mode==='closed-first')await page.evaluate(()=>{document.querySelector('.job-card-box').classList.add('is-close');document.querySelector('.desc').textContent='该职位已关闭';});return {pid:123,closed:exited,close:async()=>{closes++;await page.close();exitSession();}};};
  const bridgeFactory=async()=>({
   tabs:async()=>inventory?inventory():page.isClosed()?[]:[{windowId:'owned-window',tabId:'owned-tab',url:page.url()}],
   evaluate:async(tab,source)=>{assert.equal(tab.tabId,'owned-tab');await beforeEvaluate?.(source);const result=JSON.parse(await page.evaluate(source));await afterEvaluate?.(source);return result;},
@@ -116,6 +116,17 @@ test('a closed first panel cannot label the remaining active cards as closed',as
 test('native driver rejects an initial search with different query conditions',async t=>{
  const s=await setup(t,'wrong-search');
  assert.equal((await s.driver.listing(url)).status,'navigation_changed');
+});
+
+test('the security marker BOSS appends is not mistaken for the user navigating away',async t=>{
+ // BOSS rewrites the address with _security_check after its own environment
+ // check. Treating that as user navigation called every resumed session
+ // navigation_changed while the page sat there holding 127 job links — the
+ // run reported zero and the data was there. Measured 2026-10-02.
+ const s=await setup(t,'security-check');
+ const list=await s.driver.listing(url);
+ assert.equal(list.status,'ok');
+ assert.ok(list.jobs.length>0);
 });
 
 test('a busy dedicated profile reports its actual blocker without launching a second browser',async t=>{

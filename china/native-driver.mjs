@@ -101,8 +101,13 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
     if(challengeSeen)challengeSettled=true;
     challengeDeadline=null;
     let value;try{value=validateSearchUrl('boss',live.url);}catch{return stop('navigation_changed');}
-    if(!search&&searchKey(value)!==requestedSearch)return stop('navigation_changed');
-    if(search&&value!==search)return stop('navigation_changed');
+    // Both branches compare through searchKey. BOSS appends _security_check to
+    // the address after its own check, and that is the platform marking its
+    // result, not the user navigating away — a bare href comparison called
+    // every resumed session navigation_changed while the page sat there with
+    // 127 job links on it. Every user query/filter parameter still has to
+    // match, so this is not a loosened check, only a consistent one.
+    if(searchKey(value)!==requestedSearch)return stop('navigation_changed');
     challengeDeadline=null;
     return {status:'ok',url:live.url};
   };
