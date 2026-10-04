@@ -51,10 +51,20 @@ Options:
 scan 只采集，不运行简历匹配；queue 才写入 career-ops pipeline。
 退出码：0=已完成或达到设置上限；2=需登录/验证或部分失败；1=参数/运行错误。
 `;
+// A ratio is a different kind of number from a count: --limit and --pages are
+// whole numbers, but a jitter share is a fraction and rejects the integer-only
+// shape. Splitting the two parsers is clearer than loosening the one every
+// count goes through, where "3.5 pages" would then be silently accepted.
 const number=(name,value,defaultValue,min,max)=>{
   if(value===undefined) return defaultValue;
   if(!/^\d+$/.test(value)||Number(value)<min||Number(value)>max) throw new Error(`${name} must be ${min}–${max}`);
   return Number(value);
+};
+const ratio=(name,value,defaultValue,min,max)=>{
+  if(value===undefined) return defaultValue;
+  const n=Number(value);
+  if(!Number.isFinite(n)||n<min||n>max) throw new Error(`${name} must be ${min}–${max}`);
+  return n;
 };
 
 export async function main(args=process.argv.slice(2)) {
@@ -78,7 +88,7 @@ export async function main(args=process.argv.slice(2)) {
   // 规则 1.1. Accepted as a ratio so it reads as "a share of the interval" rather
   // than a second unit the operator has to convert. Clamped inside the limiter,
   // so an out-of-range value here is not an error worth failing a run over.
-  const jitterRatio=number('jitter',v.jitter,0,0,1);
+  const jitterRatio=ratio('jitter',v.jitter,0,0,1);
   const timeoutMs=number('timeout-ms',v['timeout-ms'],15000,1000,60000);
   const channel=v.channel||'chrome';
   if(!['chrome','chromium','msedge'].includes(channel)) throw new Error('channel must be chrome, chromium or msedge');
