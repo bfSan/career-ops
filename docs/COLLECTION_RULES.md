@@ -191,7 +191,29 @@ driver 上的 `delayMs` 是**页面就绪等待**（轮询到安全页消失为�
 
 **人工在普通浏览器手动搜索，同样被弹回**。五个不同出口、两种输入方式、一双手，结果一致。BOSS 验证页自己给出的提示是「当前 IP 存在异常」，但换 IP 后依旧——**平台自己的诊断信息在这里是不可靠的**，不能当作唯一依据。
 
+**补充（2026-10-03 晚）**：改走**家庭宽带 IPv4**（mihomo 规则 `DOMAIN-SUFFIX,zhipin.com,DIRECT`）后，**人工手动搜索依然被弹回首页**。至此排除了全部网络因素：5 个境外出口 + 家庭宽带、3 种输入方式 + 人工手动，结论一致。
+
 **结论：这个账号被限制了，不是网络问题。** 恢复只能等平台侧解除，或换一个账号。继续在输入方式、IP、点击实现上花时间都是浪费。
+
+### 招聘站点固定走家庭宽带（2026-10-03，已配好）
+
+用户决定：BOSS 与猎聘**不再使用任何境外节点**，固定家庭宽带直连。理由是这两个站点按出口 IP 判风控，境外节点会被判为异常环境。
+
+已写入 `~/.config/Clash Desktop/work/config.yaml` 的 `rules` 最前面（备份 `config.yaml.bak-20261003-*`）：
+
+```yaml
+- DOMAIN-SUFFIX,zhipin.com,DIRECT
+- DOMAIN-SUFFIX,liepin.com,DIRECT
+- DOMAIN-SUFFIX,zhaopin.com,DIRECT
+- DOMAIN-SUFFIX,51job.com,DIRECT
+- DOMAIN-SUFFIX,kanzhun.com,DIRECT
+- DOMAIN-SUFFIX,lagou.com,DIRECT
+- DOMAIN-SUFFIX,shixiseng.com,DIRECT
+```
+
+**⚠️ 重要操作纪律**：调节点的唯一正确方式是改这些**规则**或让用户在 Clash Desktop 里操作，**绝对不要用 API 切换 `混合出口` 等代理组**——那会影响用户全部功能（CPA、chatgpt、GitHub 等全部走 `ExternalProxy` → `混合出口`）。2026-10-03 已因此误切过两次，用户明确纠正。
+
+**猎聘验证通过**：`safe.liepin.com/page/liepin/captchaPage_PC`（账号级），用户人工点过一次后首页恢复正常。**采集命令不再需要 `CHINA_PROXY_SERVER`**，规则已在 mihomo 层生效。
 
 **恢复条件**：①在**普通浏览器里手动搜一次**，能出结果才算真的恢复；②再跑采集。顺序不能反。
 
