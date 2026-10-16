@@ -62,6 +62,17 @@ test('matches through the session query the parser strips', () => {
   } finally { restore(); }
 });
 
+test('matches Liepin /a/ detail links as well as /job/ links', () => {
+  const full = '/a/80525103.shtml?pgRef=c_pc_search_page%3Ajob_listcard&skId=abc123';
+  const anchor = mkAnchor('80525103', {href: full});
+  const restore = withDom([anchor]);
+  try {
+    const r = findCard({platform: 'liepin', url: 'https://www.liepin.com/a/80525103.shtml'});
+    assert.equal(r.status, 'found');
+    assert.equal(r.index, 0);
+  } finally { restore(); }
+});
+
 test('reports closed rather than missing when the card is present but hidden', () => {
   // The platform closed this posting. That is a real observation, and folding
   // it into extraction_failed would misreport why the job is absent.

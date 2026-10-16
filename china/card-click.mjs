@@ -29,7 +29,7 @@
  */
 export function findCard({platform, url} = {}) {
   const id = (() => {
-    const m = String(url || '').match(/\/job\/([a-zA-Z0-9_-]+)\.shtml/);
+    const m = String(url || '').match(/\/(?:job|a)\/([a-zA-Z0-9_-]+)\.shtml/);
     return m ? m[1] : null;
   })();
   if (!id) return {status: 'not_found'};
@@ -39,7 +39,7 @@ export function findCard({platform, url} = {}) {
   // check uses, so query-string differences (skId rotation, d_* tracking,
   // curPage changes between the listing and the click) do not cause a miss.
   const keyOf = a => {
-    const m = String(a.getAttribute('href') || '').match(/\/job\/([a-zA-Z0-9_-]+)\.shtml/);
+    const m = String(a.getAttribute('href') || '').match(/\/(?:job|a)\/([a-zA-Z0-9_-]+)\.shtml/);
     return m ? m[1] : null;
   };
 
