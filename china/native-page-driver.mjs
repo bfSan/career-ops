@@ -44,9 +44,9 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
   if(/(^|\.)liepin\.com$/.test(u.hostname)&&/passport|login/i.test(u.hostname+u.pathname))return stop('login_required');
   if(platform==='linkedin'&&/\/(?:login|uas\/login)(?:\/|$)/i.test(u.pathname))return stop('login_required');
   if(platform==='linkedin'&&/(^|\.)linkedin\.cn$/.test(u.hostname))return stop('regional_redirect');
-  try{platformUrl(platform,live.url);}catch{return stop('navigation_changed');}
+  try{platformUrl(platform,live.url);}catch{onEvent({event:'native_navigation_rejected',platform,url:live.url,boundUrl,navigating});return stop('navigation_changed');}
   platformVisited=true;
-  if(boundUrl&&!navigating&&live.url!==boundUrl)return stop('navigation_changed');
+  if(boundUrl&&!navigating&&live.url!==boundUrl){onEvent({event:'native_bound_url_changed',platform,url:live.url,boundUrl});return stop('navigation_changed');}
   return {status:'ok',url:live.url};
  }
  const evaluate=kind=>bridge.evaluate(tab,`JSON.stringify((()=>{const result=(${extractPage.toString()})({platform:${JSON.stringify(platform)},kind:${JSON.stringify(kind)}});return {...result,timeOrigin:performance.timeOrigin,documentUrl:location.href};})())`);
@@ -84,7 +84,7 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    }
    let matches=false;
    try{matches=kind==='listing'?key(result.documentUrl)===key(search)&&(!expected||searchPageIdentity(platform,result.documentUrl)===searchPageIdentity(platform,expected)):jobIdentity(platform,result.documentUrl).key===expected.key;}catch{}
-   if(!matches){if(navigating&&result.documentUrl===previousUrl){await pause(pollMs);continue;}return stop('identity_mismatch');}
+   if(!matches){onEvent({event:'native_document_identity_mismatch',platform,kind,expectedUrl:expected?.url||null,expectedKey:expected?.key||null,documentUrl:result.documentUrl,previousUrl,navigating});if(navigating&&result.documentUrl===previousUrl){await pause(pollMs);continue;}return stop('identity_mismatch');}
    if(kind==='detail'&&result.timeOrigin===previousOrigin){await pause(pollMs);continue;}
    if(platform==='linkedin'&&kind==='detail'&&result.status==='jd_truncated'&&!expanded){
     expanded=true;const gap=await wait();if(gap.status!=='ok')return gap;
@@ -136,7 +136,7 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    if(found.status==='closed')return stop('closed');
    // Ambiguous and not-found are extraction failures, not page verdicts: the
    // listing could not be trusted to name the job that was asked for.
-   if(found.status!=='found')return stop('extraction_failed');
+   if(found.status!=='found'){onEvent({event:'native_card_click_rejected',platform,requestedUrl:url,cardStatus:found.status,candidates:found.candidates??null});return stop('extraction_failed');}
    // Fire-and-forget: the click navigates, so its context dies before any
    // value could be marshalled back. read() below observes the arrival.
    const run=bridge.evaluateVoid||((t,src)=>bridge.evaluate(t,src));
