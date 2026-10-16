@@ -20,18 +20,19 @@ function browserExecutable(channel) {
   throw new Error(`${app} executable not found; install the browser or choose --channel chromium.`);
 }
 
-// Deliberately no automation/debugging connection: BOSS's sign page can react
-// to Runtime console inspection by calling history.back() and clearing the DOM.
-// This phase is user-operated; process startup does not prove page readiness.
-export async function openNativeLogin({root,platform,url,channel='chrome',executablePath,startupMs=1000,closeTimeoutMs=15000}) {
+// The human login path is deliberately ordinary Chrome: BOSS can react to
+// automation-shaped launches or Runtime console inspection by calling history.back()
+// and clearing the DOM. Native scanning opts into the CDP transport separately;
+// this phase is user-operated and process startup does not prove page readiness.
+export async function openNativeLogin({root,platform,url,channel='chrome',executablePath,startupMs=1000,closeTimeoutMs=15000,debug=false}) {
   validateLoginUrl(platform,url);
   const executable=executablePath || browserExecutable(channel);
   accessSync(executable,constants.X_OK);
   const profile=await acquireBrowserProfile(root,platform);
   // A stale DevToolsActivePort left by a previous run (or by a profile copied
-  // from another machine) would be read as this session's port. Remove it so the
-  // bridge can only ever observe the port this launch publishes.
-  rmSync(join(profile.directory,'DevToolsActivePort'),{force:true});
+  // from another machine) would be read as this session's port. Remove it before
+  // a CDP-backed scan so the bridge can only ever observe this launch's port.
+  if(debug)rmSync(join(profile.directory,'DevToolsActivePort'),{force:true});
   let child;
   try {
     // Deliberately no --new-window. BOSS's security check rewrites the search
@@ -48,11 +49,11 @@ export async function openNativeLogin({root,platform,url,channel='chrome',execut
       // signed out, and the site answers by clearing the page to about:blank.
       // macOS keeps its Keychain, so the flag must not be applied there.
       ...(process.platform==='linux'?['--password-store=basic']:[]),
-      // Port 0 lets Chrome pick a free port and publish it in
-      // <profile>/DevToolsActivePort; the CDP bridge reads that file instead of
-      // guessing. The bridge only ever sends commands and never enables a
-      // protocol domain, which is the signal BOSS actually reacts to.
-      '--remote-debugging-port=0',
+      // Native scanning needs a CDP bridge. Keep that transport opt-in: the
+      // human login path deliberately launches an ordinary Chrome without a
+      // debugging port, because BOSS treats the automation-shaped launch as a
+      // risk signal even when no protocol domain is enabled.
+      ...(debug?['--remote-debugging-port=0']:[]),
       // The restore bubble adds a second tab and would break the one-tab
       // invariant the owned-window drivers enforce.
       '--hide-crash-restore-bubble','--disable-session-crashed-bubble',

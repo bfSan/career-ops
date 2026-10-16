@@ -2,11 +2,15 @@ import {createNativeLiepinDriver} from './native-liepin-driver.mjs';
 import {createNativePageDriver} from './native-page-driver.mjs';
 import {openNativeLogin} from './native-login.mjs';
 import {createCdpBridge} from './cdp-bridge.mjs';
+import {createNativeBridge} from './native-bridge.mjs';
 import {extractPage,validateSearchUrl,jobIdentity,loginUrl} from './platforms.mjs';
 import {findSearchBox,fillSearchBox,submitSearch} from './search-box.mjs';
 import {normalizeSalary,loadNativeSalaryFont} from './salary.mjs';
 
-// This function is serialized into Chrome's Apple Events isolated world.
+const defaultBridgeFactory=process.platform==='darwin'?createNativeBridge:createCdpBridge;
+
+// This function is serialized into the owned Chrome tab: Apple Events on macOS,
+// or the minimal CDP bridge on Linux.
 // Limit interaction to the exact observed job-name anchor. Prevent its default
 // standalone navigation while retaining the site's card-selection listener.
 function selectCard({id,title,click}){
@@ -40,7 +44,7 @@ function advanceList(){
   return {status:/没有更多职位|没有更多了|已显示全部职位/.test(document.body?.innerText||'')?'end':'pagination_unavailable'};
 }
 
-export async function createNativeDriver({root,platform='boss',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=createCdpBridge,automaticVerificationTimeoutMs=15000}){
+export async function createNativeDriver({root,platform='boss',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=defaultBridgeFactory,automaticVerificationTimeoutMs=15000}){
   if(platform==='liepin')return createNativeLiepinDriver({root,platform,channel,delayMs,timeoutMs,pollMs,onEvent,sessionFactory,bridgeFactory});
   if(platform==='linkedin')return createNativePageDriver({root,platform,channel,delayMs,timeoutMs,pollMs,onEvent,sessionFactory,bridgeFactory});
   const fontAttempts=new Set();let fonts=[];const requests=[];
@@ -250,10 +254,10 @@ export async function createNativeDriver({root,platform='boss',channel='chrome',
       const waited=await wait();if(waited.status!=='ok')return waited;
       // Open the homepage and search from it, rather than navigating to the
       // results address. See search-box.mjs for what the site measures.
-      session=await sessionFactory({root,platform:'boss',channel,url:loginUrl('boss',query)});
+      session=await sessionFactory({root,platform:'boss',channel,url:loginUrl('boss',query),debug:process.platform!=='darwin'});
       session.closed?.then(()=>{if(!closing)blocked||={status:'browser_closed'};});
       bridge=await bridgeFactory({root,session,onEvent});
-      onEvent({event:'native_browser_started',platform,debugger:true});
+      onEvent({event:'native_browser_started',platform,debugger:process.platform!=='darwin'});
       let result=await read('state');
       if(result.status==='ok')result=await searchFromHome(query);
       if(result.status==='ok'){search=validateSearchUrl('boss',result.url);lastSignature=signature(result);}

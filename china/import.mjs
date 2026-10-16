@@ -3,7 +3,7 @@ import { jobIdentity, extractPage } from './platforms.mjs';
 import { withPipelineLock } from '../pipeline-lock.mjs';
 import { openStore, saveStore, storePath, recordObservation, fingerprint, atomicPrivateWrite } from './store.mjs';
 
-const METHODS = new Set(['browser_accessibility', 'browser_dom', 'manual_copy']);
+const METHODS = new Set(['browser_accessibility', 'browser_dom', 'browser_extension', 'manual_copy']);
 
 // Explicit import of text the user/assistant could see. No browser, cookie, or HTTP access.
 export async function importJobs(root, { platform, records }) {

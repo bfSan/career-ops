@@ -1,12 +1,15 @@
 import {nextControl,searchIdentity,searchPageIdentity,validateNextUrl} from './pagination.mjs';
 import {openNativeLogin} from './native-login.mjs';
 import {createCdpBridge} from './cdp-bridge.mjs';
+import {createNativeBridge} from './native-bridge.mjs';
 import {extractPage,jobIdentity,validateSearchUrl,platformUrl} from './platforms.mjs';
 import {expandDescription} from './detail-controls.mjs';
 import {findCard,clickCard} from './card-click.mjs';
 
+const defaultBridgeFactory=process.platform==='darwin'?createNativeBridge:createCdpBridge;
+
 // Standalone detail pages share this lifecycle; BOSS retains its panel driver.
-export async function createNativePageDriver({root,platform='liepin',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=createCdpBridge}) {
+export async function createNativePageDriver({root,platform='liepin',channel='chrome',delayMs=15000,timeoutMs=15000,pollMs=250,onEvent=()=>{},sessionFactory=openNativeLogin,bridgeFactory=defaultBridgeFactory}) {
  if(channel!=='chrome')throw new Error('Native scanning requires Chrome');
  let session,bridge,tab,closing,blocked,search='',listUrl='',lastSignature='',previousUrl='',previousOrigin=null,boundUrl='',navigating=false,platformVisited=false;
  const cards=new Map(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -166,9 +169,9 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
   listing:safe(async(url,pageIndex=0)=>{
    if(session)return stop('driver_already_started');
    search=validateSearchUrl(platform,url);await wait();
-   session=await sessionFactory({root,platform,channel,url:search});
+   session=await sessionFactory({root,platform,channel,url:search,debug:process.platform!=='darwin'});
    session.closed?.then(exit=>{if(!closing){onEvent({event:'native_browser_exited',platform,code:exit?.code??null});blocked||={status:'browser_closed'};}});
-   bridge=await bridgeFactory({root,session});onEvent({event:'native_browser_started',platform,debugger:true});
+   bridge=await bridgeFactory({root,session});onEvent({event:'native_browser_started',platform,debugger:process.platform!=='darwin'});
    let result=await read('listing',search);
    for(let i=0;i<pageIndex&&result.status==='ok';i++)result=await next();
    return result;

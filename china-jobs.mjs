@@ -124,8 +124,8 @@ export async function main(args=process.argv.slice(2)) {
     if(v.headless) throw new Error('login requires a visible browser');
     if(!process.stdin.isTTY) throw new Error('Run login from an interactive terminal');
     if(platform==='boss'||browserDriver==='native') {
-      const session=await openNativeLogin({root,platform,channel,url:target});
-      console.error(`${platform} 专用 Chrome 进程已启动（无调试连接）。请在该窗口完成登录，再回终端按 Enter 保存并关闭。`);
+      const session=await openNativeLogin({root,platform,channel,url:target,debug:false});
+      console.error(`${platform} 专用普通 Chrome 进程已启动（未开启调试端口）。请在该窗口完成登录，再回终端按 Enter 保存并关闭。`);
       if(process.platform==='darwin'&&channel==='chrome')console.error('首次原生扫描还需本人启用顶部“显示 → 开发者 → 允许 Apple 事件中的 JavaScript”。无需安装扩展。');
       console.error('程序未读取页面或确认登录；若页面异常请按 Ctrl+C 停止。20分钟未确认会关闭本次窗口。');
       const result=await waitForNativeLogin({session});

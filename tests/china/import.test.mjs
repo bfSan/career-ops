@@ -21,6 +21,13 @@ test('assisted visible capture archives provenance, deduplicates and never queue
     assert.equal(existsSync(join(root,'data/pipeline.md')),false);
   }finally{rmSync(root,{recursive:true,force:true});}
 });
+test('ordinary Chrome extension captures use the same explicit import contract',async()=>{
+  const root=temp();try{
+    const extensionRecord={...record,captureMethod:'browser_extension'};
+    assert.equal((await importJobs(root,{platform:'boss',records:[extensionRecord]})).imported,1);
+    assert.equal(openStore(root).jobs['boss:a123'].lastAttempt.source.captureMethod,'browser_extension');
+  }finally{rmSync(root,{recursive:true,force:true});}
+});
 test('incomplete, gated or malformed imports fail the whole batch before data writes',async()=>{
   for(const patch of [{complete:false},{description:record.description+'登录查看完整内容'},{url:'https://evil.test/job_detail/a123.html'},{captureMethod:'guessed'},{observedAt:'invalid'}]) {
     const root=temp();try{

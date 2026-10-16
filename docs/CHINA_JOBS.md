@@ -93,7 +93,7 @@ npm run china:scan -- --platform boss --query "AI Agent" --resume --limit 5 --pa
 
 Playwright方式继续原有保护：BOSS `/web/passport/zp/security.html?code=37` 允许网站自身完成一次检查，最多8秒，其间不提取岗位；再次进入或超时即停止。5秒内6次主页面导航返回 `navigation_loop`；主框架进入 `about:blank` 返回 `blank_page`。这些受控事件保护也用于猎聘登录。BOSS原生login由用户操作，没有扫描期间的状态轮询。
 
-原生（CDP）方式沿用同一契约，只放宽等待窗口为 15 秒：2026-10-02 在本机用已登录 profile 实测，安全校验这一跳约 12 秒由网站自行走完并返回列表，8 秒窗口总是在它完成前一刻到期，把本可成功的会话判成失败。15 秒是登记在 `docs/COLLECTION_RULES.md` 的显式预算，等待期间不点击、不刷新、不重放，请求数增量为 0，因此不属于重试预算。语义边界不变：仅首次列表页允许等待（进入详情页后安全页仍是终态），全程只允许一次，第二次进入或超时立即停止。
+原生方式沿用同一契约，只放宽等待窗口为 15 秒：macOS 使用 Apple Events/ScriptingBridge，Linux 使用最小 CDP bridge。2026-10-02 在本机用已登录 profile 实测，安全校验这一跳约 12 秒由网站自行走完并返回列表，8 秒窗口总是在它完成前一刻到期，把本可成功的会话判成失败。15 秒是登记在 `docs/COLLECTION_RULES.md` 的显式预算，等待期间不点击、不刷新、不重放，请求数增量为 0，因此不属于重试预算。语义边界不变：仅首次列表页允许等待（进入详情页后安全页仍是终态），全程只允许一次，第二次进入或超时立即停止。
 
 猎聘的 `safe.liepin.com` 不适用该放宽：该站点的验证需要人工点击，且登录本身可能触发账号风控（见下），因此保持即时终止。
 
@@ -102,14 +102,14 @@ Playwright方式继续原有保护：BOSS `/web/passport/zp/security.html?code=3
 如果普通Chrome能正常看岗位、独立自动化会话却反复验证，使用这一入口：
 
 1. 在平时使用的Chrome里登录，手动打开岗位详情，保留页面。
-2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。
+2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。Linux BOSS 也可构建普通 Chrome 扩展（`npm run china:extension`）：扩展在 BOSS 页面显示面板，用户手动完成搜索后可启动一次最多2条的自动读取；两条之间至少15秒并带随机抖动，遇到验证、登录门槛、页面身份变化或不完整正文立即停止。扩展不连接调试器、不读取 Cookie、不调用私有 API；仅申请 `activeTab`、`scripting`、`storage` 以及 BOSS 页面匹配范围的 host permission。
 3. 将真实读取到的字段整理为本地JSON数组，然后导入：
 
 ```bash
 npm run china:import -- --platform boss --file /absolute/private/path/boss-jds.json
 ```
 
-每条记录必须有 `url`（真实岗位详情链接）、`title`、`description`（完整原文）、`observedAt`（实际读取时的ISO时间）、`captureMethod`（`browser_accessibility`、`browser_dom` 或 `manual_copy`）和 `complete: true`。可选字段为 `company`、`location`、`salaryRaw`、`experience`、`education`、`tags`、`advertised`、`listingText`、`sourceText`。未知字段留空；`sourceText` 可保留可见原始文本，不包含Cookie或隐藏页面状态。
+每条记录必须有 `url`（真实岗位详情链接）、`title`、`description`（完整原文）、`observedAt`（实际读取时的ISO时间）、`captureMethod`（`browser_accessibility`、`browser_dom`、`browser_extension` 或 `manual_copy`）和 `complete: true`。可选字段为 `company`、`location`、`salaryRaw`、`experience`、`education`、`tags`、`advertised`、`listingText`、`sourceText`。未知字段留空；`sourceText` 可保留可见原始文本，不包含Cookie或隐藏页面状态。
 
 `complete` 是采集者确认，不是程序对完整性的独立证明。登录预览、摘要、改写后的正文不能声明为完整JD。导入会拒绝缺少字段、未知平台链接、明显登录截断或已关闭的内容，并将整批输入先校验再写入。
 

@@ -21,7 +21,7 @@ function fixture(t,body) {
 test('native BOSS login opens the collector profile on an ephemeral debug port and waits for graceful close',async t=>{
   assert.equal(typeof login.openNativeLogin,'function');
   const options=fixture(t);
-  const session=await login.openNativeLogin(options);
+  const session=await login.openNativeLogin({...options,debug:true});
   t.after(()=>session.close());
   const args=JSON.parse(readFileSync(join(options.root,'args.json'),'utf8'));
   assert.ok(args.includes(`--user-data-dir=${join(options.root,'data/china/browser/boss')}`));
@@ -37,6 +37,15 @@ test('native BOSS login opens the collector profile on an ephemeral debug port a
   assert.equal(readFileSync(join(options.root,'flushed'),'utf8'),'yes');
   await session.close();
   assert.equal((await session.closed).code,0);
+});
+
+test('human login can launch ordinary Chrome without a debug port',async t=>{
+  const options=fixture(t);const session=await login.openNativeLogin({...options,debug:false});
+  t.after(()=>session.close());
+  const args=JSON.parse(readFileSync(join(options.root,'args.json'),'utf8'));
+  assert.ok(!args.includes('--remote-debugging-port=0'));
+  assert.ok(!existsSync(join(options.root,'data/china/browser/boss','DevToolsActivePort')));
+  await session.close();
 });
 
 test('native login and scanner cannot concurrently use the same profile',async t=>{
