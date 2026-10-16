@@ -140,7 +140,7 @@ export async function createNativePageDriver({root,platform='liepin',channel='ch
    // Fire-and-forget: the click navigates, so its context dies before any
    // value could be marshalled back. read() below observes the arrival.
    const run=bridge.evaluateVoid||((t,src)=>bridge.evaluate(t,src));
-   await run(tab,`(${clickCard.toString()})({index:${found.index}})`);
+   await run(tab,`(${clickCard.toString()})({index:${found.index},url:${JSON.stringify(url)}})`);
    return await read(kind,expected);
   }finally{navigating=false;}
  }
