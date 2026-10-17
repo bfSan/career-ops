@@ -11,19 +11,20 @@ const parser=extractPage.toString();
 const manifest={
   manifest_version:3,
   name:'CareerOps Liepin Visible Capture',
-  version:'0.3.0',
-  description:'User-started bounded visible Liepin capture; no debugger, cookies, private APIs or background automation.',
-  permissions:['activeTab','scripting','storage'],
+  version:'0.4.0',
+  description:'Automatically opens a bounded visible Liepin search and captures two jobs; no debugger, cookies or private APIs.',
+  permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.liepin.com/*','https://liepin.com/*','https://c.liepin.com/*'],
   content_scripts:[{matches:['https://www.liepin.com/*','https://liepin.com/*','https://c.liepin.com/*'],js:['content.js'],run_at:'document_idle'}],
   action:{default_title:'CareerOps 猎聘可见采集',default_popup:'popup.html'},
+  background:{service_worker:'background.js'},
 };
 const content=String.raw`(()=>{
 'use strict';
 if(window.__careerOpsLiepinVisibleCapture)return;
 window.__careerOpsLiepinVisibleCapture=true;
 const extractPage=${parser};
-const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV3';
+const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV4',DEFAULT_SEARCH='https://www.liepin.com/zhaopin/?key=AI+Agent';
 const state={records:[],busy:false,autoState:null};
 const host=document.createElement('div');host.id='career-ops-liepin-visible-host';
 const shadow=host.attachShadow({mode:'closed'});
@@ -49,7 +50,7 @@ function recordFrom(result){
  return {platform:'liepin',url:canonicalUrl(),title:job.title||'',company:job.company||'',location:job.location||'',salaryRaw:job.salaryRaw||'',experience:job.experience||'',education:job.education||'',companySizeRaw:job.companySizeRaw||'',tags:Array.isArray(job.tags)?job.tags:[],advertised:job.advertised===true,listingText:job.listingText||'',description:job.description,complete:true,captureMethod:'browser_extension',observedAt:new Date().toISOString(),sourceText:job.listingText||''};
 }
 function saveRecord(record){const i=state.records.findIndex(r=>r.url===record.url);if(i<0)state.records.push(record);else state.records[i]=record;download.disabled=!state.records.length;}
-async function restore(){const saved=await storageGet([KEY,AUTO_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;download.disabled=!state.records.length;if(state.autoState?.phase==='running')show('自动采集恢复中：第 '+(state.autoState.index+1)+'/'+state.autoState.jobs.length+' 条\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='stopped')show('自动采集已停止：'+(state.autoState.message||'页面异常')+'\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='done')show('自动采集已完成\\n累计：'+state.records.length+' 条。');else show('已启动。请手动完成搜索；进入搜索结果页后自动读取前2条。\\n累计：'+state.records.length+' 条。');}
+async function restore(){const saved=await storageGet([KEY,AUTO_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;download.disabled=!state.records.length;if(state.autoState?.phase==='running')show('自动采集恢复中：第 '+(state.autoState.index+1)+'/'+state.autoState.jobs.length+' 条\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='stopped')show('自动采集已停止：'+(state.autoState.message||'页面异常')+'\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='done')show('自动采集已完成\\n累计：'+state.records.length+' 条。');else show('已启动。自动打开 AI Agent 搜索并读取前2条。\\n累计：'+state.records.length+' 条。');}
 async function readCurrent(){
  const result=extractPage({platform:'liepin',kind:'detail'});
  if(result.status==='challenge')throw new Error('检测到验证页，自动采集停止');
@@ -145,7 +146,17 @@ auto.addEventListener('click',startAuto);capture.addEventListener('click',captur
 const popup=`<!doctype html><meta charset="utf-8"><style>body{width:290px;margin:0;padding:14px;font:14px/1.45 system-ui;color:#172033}h3{margin:0 0 8px}p{color:#4b5563}button{width:100%;border:0;border-radius:8px;padding:9px;background:#ff6a00;color:#fff;cursor:pointer}#status{margin-top:8px;white-space:pre-wrap}</style><h3>CareerOps 猎聘</h3><p>普通 Chrome 可见页面辅助读取；不连接调试器。</p><button id="start">重新注入当前页面板</button><div id="status"></div><script src="popup.js"></script>`;
 const popupJs=`document.querySelector('#start').addEventListener('click',async()=>{const s=document.querySelector('#status');try{const tabs=await chrome.tabs.query({active:true,currentWindow:true});const tab=tabs[0];if(!tab?.id)throw new Error('没有活动标签页');await chrome.scripting.executeScript({target:{tabId:tab.id},files:['content.js']});s.textContent='已重新注入页面采集面板。';}catch(e){s.textContent='启动失败：'+e.message;}});`;
 writeFileSync(join(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
+const background=`const SEARCH='https://www.liepin.com/zhaopin/?key=AI+Agent';
+async function openSearch(){
+  const tabs=await chrome.tabs.query({});
+  const existing=tabs.find(t=>{try{return new URL(t.url||'').hostname.endsWith('liepin.com');}catch{return false;}});
+  if(existing?.id){await chrome.tabs.update(existing.id,{url:SEARCH,active:true});return;}
+  await chrome.tabs.create({url:SEARCH,active:true});
+}
+chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove('careerOpsLiepinAutoStateV4');await openSearch();});
+chrome.runtime.onStartup.addListener(openSearch);`;
 writeFileSync(join(out,'popup.html'),popup);
 writeFileSync(join(out,'popup.js'),popupJs);
 writeFileSync(join(out,'content.js'),content);
-console.log(JSON.stringify({output:out,files:['manifest.json','popup.html','popup.js','content.js'],permissions:manifest.permissions,hostPermissions:manifest.host_permissions},null,2));
+writeFileSync(join(out,'background.js'),background);
+console.log(JSON.stringify({output:out,files:['manifest.json','popup.html','popup.js','content.js','background.js'],permissions:manifest.permissions,hostPermissions:manifest.host_permissions},null,2));

@@ -102,7 +102,7 @@ Playwright方式继续原有保护：BOSS `/web/passport/zp/security.html?code=3
 如果普通Chrome能正常看岗位、独立自动化会话却反复验证，使用这一入口：
 
 1. 在平时使用的Chrome里登录，手动打开岗位详情，保留页面。
-2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。Linux BOSS 也可构建普通 Chrome 扩展（`npm run china:extension`）：扩展在 BOSS 页面显示面板，用户手动完成搜索后可启动一次最多2条的自动读取；两条之间至少15秒并带随机抖动，遇到验证、登录门槛、页面身份变化或不完整正文立即停止。扩展不连接调试器、不读取 Cookie、不调用私有 API；仅申请 `activeTab`、`scripting`、`storage` 以及 BOSS 页面匹配范围的 host permission。猎聘默认不再使用 CDP/native 连续点击作为低风控路线；可构建 `npm run china:liepin-extension`，在普通 Chrome 中由用户手动完成搜索后，扩展自动启动一次最多2条的可见页面自动读取，无需再点击采集按钮；扩展通过当前列表中的岗位卡片进行有限点击，两条之间至少15秒并带随机抖动，详情页重载后从扩展存储恢复进度，返回列表失败、验证、登录门槛或页面身份变化立即停止。也可手动打开完整岗位详情后点击“读取当前岗位”。扩展不读取 Cookie、不调用私有 API、不连接调试器，导出同一 `browser_extension` import 格式；此路线不能保证平台永不验证。
+2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。Linux BOSS 也可构建普通 Chrome 扩展（`npm run china:extension`）：扩展在 BOSS 页面显示面板，用户手动完成搜索后可启动一次最多2条的自动读取；两条之间至少15秒并带随机抖动，遇到验证、登录门槛、页面身份变化或不完整正文立即停止。扩展不连接调试器、不读取 Cookie、不调用私有 API；仅申请 `activeTab`、`scripting`、`storage` 以及 BOSS 页面匹配范围的 host permission。猎聘默认不再使用 CDP/native 连续点击作为低风控路线；可构建 `npm run china:liepin-extension`，在普通 Chrome 中，扩展安装/更新后自动打开默认搜索 `AI Agent`，进入结果页后自动启动一次最多2条的可见页面读取，无需用户手动搜索或点击采集按钮；扩展通过当前列表中的岗位卡片进行有限点击，两条之间至少15秒并带随机抖动，详情页重载后从扩展存储恢复进度，返回列表失败、验证、登录门槛或页面身份变化立即停止。也可手动打开完整岗位详情后点击“读取当前岗位”。扩展不读取 Cookie、不调用私有 API、不连接调试器，导出同一 `browser_extension` import 格式；此路线不能保证平台永不验证。
 3. 将真实读取到的字段整理为本地JSON数组，然后导入：
 
 ```bash
