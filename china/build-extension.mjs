@@ -11,7 +11,7 @@ const parser=extractPage.toString();
 const manifest={
   manifest_version:3,
   name:'CareerOps BOSS Visible Capture',
-  version:'0.3.1',
+  version:'0.3.2',
   description:'Automatically opens a bounded visible BOSS search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.zhipin.com/*','https://zhipin.com/*'],
@@ -24,8 +24,8 @@ const content=String.raw`(()=>{
 if(window.__careerOpsBossVisibleCapture)return;
 window.__careerOpsBossVisibleCapture=true;
 const extractPage=${parser};
-const KEY='careerOpsBossVisibleRecords',AUTO_STATE='careerOpsBossAutoStateV1';
-const state={records:[],busy:false,autoState:null};
+const KEY='careerOpsBossVisibleRecords',AUTO_STATE='careerOpsBossAutoStateV1',SEARCH_STATE='careerOpsBossSearchStateV1',SEARCH_TERM='AI Agent';
+const state={records:[],busy:false,autoState:null,searchState:null};
 const host=document.createElement('div');host.id='career-ops-boss-visible-host';
 const shadow=host.attachShadow({mode:'closed'});
 const style=document.createElement('style');
@@ -42,6 +42,19 @@ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const storageGet=keys=>new Promise(resolve=>chrome.storage.local.get(keys,resolve));
 const storageSet=value=>new Promise(resolve=>chrome.storage.local.set(value,resolve));
 const onSearchPage=()=>/^\/web\/geek\/jobs\/?$/.test(location.pathname);
+const visible=el=>!!el&&!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
+function searchInput(){return ['input.ipt-search','input[name="query"]','input[placeholder*="职位"]','input[placeholder*="搜索"]','input[type="text"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
+function searchButton(){const direct=['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean);if(direct)return direct;return [...document.querySelectorAll('button,a,div')].find(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim()))||null;}
+async function fillAndSearch(){
+ if(!onSearchPage())throw new Error('当前不是 BOSS 搜索页');
+ const input=searchInput();if(!input)throw new Error('未找到可见 BOSS 搜索输入框');
+ input.focus();input.select();
+ const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter)setter.call(input,SEARCH_TERM);else input.value=SEARCH_TERM;
+ input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:SEARCH_TERM}));input.dispatchEvent(new Event('change',{bubbles:true}));
+ const button=searchButton();if(!button)throw new Error('未找到可见 BOSS 搜索按钮');
+ button.click();
+ await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
+}
 function expectedFromJob(job){
   const u=new URL(job.url,location.href),id=u.pathname.match(/^\/job_detail\/([A-Za-z0-9_-]+)\.html$/)?.[1];
   if(!id)return null;
@@ -123,21 +136,29 @@ async function runAuto(force=false){
   }catch(error){state.autoState={phase:'stopped',listingKey:location.pathname+location.search,message:error.message};await storageSet({[AUTO_STATE]:state.autoState,[KEY]:state.records});show('自动采集停止：'+error.message+'\n已保留：'+state.records.length+' 条');}
   finally{state.busy=false;auto.disabled=false;capture.disabled=false;box.querySelector('.close').disabled=false;}
 }
-async function restore(){const saved=await storageGet([KEY,AUTO_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;download.disabled=!state.records.length;}
-async function maybeAuto(){if(state.busy||!onSearchPage())return;const key=location.pathname+location.search;if(state.autoState&&(state.autoState.phase==='done'||state.autoState.phase==='stopped'||state.autoState.phase==='running')&&state.autoState.listingKey===key)return;await runAuto(false);}
+async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;state.searchState=saved[SEARCH_STATE]||null;download.disabled=!state.records.length;}
+function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('query');}catch{return false;}}
+async function ensureSearch(){
+ if(!onSearchPage()||hasSearchQuery())return true;
+ if(state.searchState?.phase==='clicked')return false;
+ try{await fillAndSearch();show('已在可见搜索框填写“'+SEARCH_TERM+'”，并点击搜索；等待结果页……');}catch(error){state.searchState={phase:'stopped',message:error.message};await storageSet({[SEARCH_STATE]:state.searchState});show('搜索停止：'+error.message);}
+ return false;
+}
+async function maybeAuto(){if(state.busy||!onSearchPage()||!hasSearchQuery())return;const key=location.pathname+location.search;if(state.autoState&&(state.autoState.phase==='done'||state.autoState.phase==='stopped'||state.autoState.phase==='running')&&state.autoState.listingKey===key)return;await runAuto(false);}
 auto.addEventListener('click',()=>runAuto(true));
 capture.addEventListener('click',async()=>{if(state.busy)return;state.busy=true;capture.disabled=true;auto.disabled=true;try{const expected=currentExpected();if(!expected)throw new Error('当前没有可读岗位');const record=await captureExpected(expected);saveRecord(record);await storageSet({[KEY]:state.records});show('已读取：'+record.title+'\\n正文：'+record.description.length+' 字\\n累计：'+state.records.length+' 条');}catch(error){show('停止：'+error.message);}finally{state.busy=false;capture.disabled=false;auto.disabled=false;}});
 download.addEventListener('click',downloadRecords);
-(async()=>{await restore();show('已启动。进入 BOSS 搜索结果页后自动采集。\\n累计：'+state.records.length+' 条。');await maybeAuto();setInterval(()=>void maybeAuto(),1000);})();
+(async()=>{await restore();show('已启动。将通过可见搜索框填写“'+SEARCH_TERM+'”并点击搜索。\\n累计：'+state.records.length+' 条。');await ensureSearch();await maybeAuto();setInterval(()=>{void ensureSearch().then(()=>maybeAuto());},1000);})();
 })();`;
 const popup=`<!doctype html><meta charset="utf-8"><style>body{width:280px;margin:0;padding:14px;font:14px/1.45 system-ui;color:#172033}h3{margin:0 0 8px}p{color:#4b5563}button{width:100%;border:0;border-radius:8px;padding:9px;background:#0aa6a6;color:#fff;cursor:pointer}#status{margin-top:8px;white-space:pre-wrap}</style><h3>CareerOps BOSS</h3><p>页面会自动显示采集面板；不连接调试器。</p><button id="start">重新注入当前页面板</button><div id="status"></div><script src="popup.js"></script>`;
 const popupJs=`document.querySelector('#start').addEventListener('click',async()=>{const s=document.querySelector('#status');try{const tabs=await chrome.tabs.query({active:true,currentWindow:true});const tab=tabs[0];if(!tab?.id)throw new Error('没有活动标签页');await chrome.scripting.executeScript({target:{tabId:tab.id},files:['content.js']});s.textContent='已重新注入页面采集面板。';}catch(e){s.textContent='启动失败：'+e.message;}});`;
 writeFileSync(join(out,'manifest.json'),JSON.stringify(manifest,null,2)+'\n');
 writeFileSync(join(out,'popup.html'),popup);
 writeFileSync(join(out,'popup.js'),popupJs);
-const background=`const SEARCH='https://www.zhipin.com/web/geek/jobs?query=AI+Agent';
-async function openSearch(){const tabs=await chrome.tabs.query({});const existing=tabs.find(t=>{try{return new URL(t.url||'').hostname.endsWith('zhipin.com');}catch{return false;}});if(existing?.id)await chrome.tabs.update(existing.id,{url:SEARCH,active:true});else await chrome.tabs.create({url:SEARCH,active:true});}
-chrome.runtime.onInstalled.addListener(openSearch);chrome.runtime.onStartup.addListener(openSearch);`;
+const background=`const HOME='https://www.zhipin.com/web/geek/jobs';
+async function openSearch(){const tabs=await chrome.tabs.query({});const existing=tabs.find(t=>{try{return new URL(t.url||'').hostname.endsWith('zhipin.com');}catch{return false;}});if(existing?.id)await chrome.tabs.update(existing.id,{url:HOME,active:true});else await chrome.tabs.create({url:HOME,active:true});}
+chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove(['careerOpsBossAutoStateV1','careerOpsBossSearchStateV1']);await openSearch();});
+chrome.runtime.onStartup.addListener(openSearch);`;
 writeFileSync(join(out,'content.js'),content);
 writeFileSync(join(out,'background.js'),background);
 console.log(JSON.stringify({output:out,files:['manifest.json','popup.html','popup.js','content.js','background.js'],permissions:manifest.permissions,contentScripts:manifest.content_scripts},null,2));
