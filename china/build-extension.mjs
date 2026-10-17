@@ -32,7 +32,7 @@ const style=document.createElement('style');
 style.textContent=':host{all:initial}.box{position:fixed;right:18px;top:86px;z-index:2147483647;width:330px;background:#fff;color:#172033;border:1px solid #20b8b8;border-radius:12px;box-shadow:0 8px 30px #0003;font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:14px}h3{margin:0 0 8px;font-size:15px}p{margin:6px 0;color:#4b5563}.status{white-space:pre-wrap;background:#f3f7f7;border-radius:8px;padding:8px;margin:8px 0;max-height:170px;overflow:auto}.row{display:flex;gap:6px;flex-wrap:wrap}button{border:0;border-radius:7px;padding:7px 9px;background:#0aa6a6;color:#fff;cursor:pointer}button.secondary{background:#e7eeee;color:#174b4b}button.warn{background:#d97706}button:disabled{opacity:.5;cursor:wait}.close{float:right;background:transparent;color:#667;padding:0;font-size:18px}';
 shadow.append(style);
 const box=document.createElement('div');box.className='box';
-box.innerHTML='<button class="close" title="关闭">×</button><h3>CareerOps BOSS 可见采集</h3><p>先手动完成搜索。自动模式最多读取当前页前 2 条岗位，间隔至少 15 秒。</p><div class="status">等待操作。</div><div class="row"><button class="auto">自动采集前 2 条</button><button class="capture secondary">读取当前岗位</button><button class="download secondary" disabled>导出 JSON</button></div>';
+box.innerHTML='<button class="close" title="关闭">×</button><h3>CareerOps BOSS 可见采集</h3><p>进入 BOSS 搜索结果页后自动读取当前页前 2 条岗位，间隔至少 15 秒；遇验证立即停止。</p><div class="status">等待操作。</div><div class="row"><button class="auto">自动采集前 2 条</button><button class="capture secondary">读取当前岗位</button><button class="download secondary" disabled>导出 JSON</button></div>';
 shadow.append(box);document.documentElement.append(host);
 const status=box.querySelector('.status'),auto=box.querySelector('.auto'),capture=box.querySelector('.capture'),download=box.querySelector('.download');
 const show=value=>{status.textContent=value;};
@@ -102,9 +102,9 @@ async function downloadRecords(){
   const blob=new Blob([JSON.stringify(state.records,null,2)+'\n'],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-visible-jds-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
-async function runAuto(){
-  if(state.busy)return;
-  state.busy=true;auto.disabled=true;capture.disabled=true;box.querySelector('.close').disabled=true;
+async function runAuto(force=false){
+  if(state.busy||state.autoState?.phase==='done'||(state.autoState?.phase==='stopped'&&!force))return;
+  state.busy=true;state.autoState={phase:'running',listingKey:location.pathname+location.search};await storageSet({[AUTO_STATE]:state.autoState});auto.disabled=true;capture.disabled=true;box.querySelector('.close').disabled=true;
   try{
     if(!onSearchPage())throw new Error('请先打开 BOSS 搜索结果页');
     const listing=extractPage({platform:'boss',kind:'listing'});
@@ -119,13 +119,13 @@ async function runAuto(){
       const record=await captureExpected(expected);
       show('已读取第 '+(i+1)+' 条：'+record.title+'\n正文：'+record.description.length+' 字\n累计：'+state.records.length+' 条');
     }
-    show('自动采集完成：'+state.records.length+' 条。点击“导出 JSON”后运行 china:import。');
-  }catch(error){show('自动采集停止：'+error.message+'\n已保留：'+state.records.length+' 条');}
+    state.autoState={phase:'done',listingKey:location.pathname+location.search};await storageSet({[AUTO_STATE]:state.autoState,[KEY]:state.records});await downloadRecords();show('自动采集完成：'+state.records.length+' 条，已自动导出 JSON。');
+  }catch(error){state.autoState={phase:'stopped',listingKey:location.pathname+location.search,message:error.message};await storageSet({[AUTO_STATE]:state.autoState,[KEY]:state.records});show('自动采集停止：'+error.message+'\n已保留：'+state.records.length+' 条');}
   finally{state.busy=false;auto.disabled=false;capture.disabled=false;box.querySelector('.close').disabled=false;}
 }
 async function restore(){const saved=await storageGet([KEY,AUTO_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;download.disabled=!state.records.length;}
-async function maybeAuto(){if(state.busy||!onSearchPage())return;const key=location.pathname+location.search;if(state.autoState?.phase==='done'&&state.autoState.listingKey===key)return;state.autoState=null;await storageSet({[AUTO_STATE]:null});await runAuto();}
-auto.addEventListener('click',runAuto);
+async function maybeAuto(){if(state.busy||!onSearchPage())return;const key=location.pathname+location.search;if(state.autoState&&(state.autoState.phase==='done'||state.autoState.phase==='stopped'||state.autoState.phase==='running')&&state.autoState.listingKey===key)return;await runAuto(false);}
+auto.addEventListener('click',()=>runAuto(true));
 capture.addEventListener('click',async()=>{if(state.busy)return;state.busy=true;capture.disabled=true;auto.disabled=true;try{const expected=currentExpected();if(!expected)throw new Error('当前没有可读岗位');const record=await captureExpected(expected);saveRecord(record);await storageSet({[KEY]:state.records});show('已读取：'+record.title+'\\n正文：'+record.description.length+' 字\\n累计：'+state.records.length+' 条');}catch(error){show('停止：'+error.message);}finally{state.busy=false;capture.disabled=false;auto.disabled=false;}});
 download.addEventListener('click',downloadRecords);
 (async()=>{await restore();show('已启动。进入 BOSS 搜索结果页后自动采集。\\n累计：'+state.records.length+' 条。');await maybeAuto();setInterval(()=>void maybeAuto(),1000);})();
