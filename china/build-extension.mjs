@@ -11,7 +11,7 @@ const parser=extractPage.toString();
 const manifest={
   manifest_version:3,
   name:'CareerOps BOSS Visible Capture',
-  version:'0.3.0',
+  version:'0.3.1',
   description:'Automatically opens a bounded visible BOSS search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.zhipin.com/*','https://zhipin.com/*'],
