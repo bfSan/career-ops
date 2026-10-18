@@ -12,7 +12,7 @@ const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
 const manifest={
   manifest_version:3,
   name:'CareerOps BOSS Visible Capture',
-  version:'0.3.3',
+  version:'0.3.4',
   description:'Automatically opens a bounded visible BOSS search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.zhipin.com/*','https://zhipin.com/*'],
@@ -106,6 +106,28 @@ async function readPanel(expected){
   }
   throw new Error('等待岗位面板超时，未确认完整 JD');
 }
+async function paceBeforeDetail(index){
+  const min=15000,jitter=Math.floor(Math.random()*6001);
+  const last=Number(state.autoState?.lastDetailActionAt||0);
+  const due=Math.max(0,last+min-Date.now());
+  const wait=Math.max(due,min)+jitter;
+  show('等待 '+Math.round(wait/1000)+' 秒后读取第 '+(index+1)+' 条，模拟 Mac 采集节奏……');
+  await sleep(wait);
+  if(!onSearchPage())throw new Error('等待期间页面离开 BOSS 搜索结果页');
+  state.autoState={...(state.autoState||{}),lastDetailActionAt:Date.now()};
+  await storageSet({[AUTO_STATE]:state.autoState});
+}
+async function readPanelOnce(expected){
+  if(!onSearchPage())throw new Error('当前不是 BOSS 搜索结果页');
+  const result=extractPage({platform:'boss',kind:'panel',expected});
+  if(result.status==='challenge')throw new Error('检测到验证页，自动采集已停止');
+  if(result.status==='login_required')throw new Error('检测到登录门槛，自动采集已停止');
+  if(result.status==='ok'&&result.job?.description){
+    if(result.job.description.length<40)throw new Error('正文过短，未确认是完整 JD');
+    return result;
+  }
+  return null;
+}
 async function selectCard(expected){
   if(!onSearchPage())throw new Error('当前不是 BOSS 搜索结果页');
   const anchors=[...document.querySelectorAll('.job-card-wrap a.job-name[href*="/job_detail/"]')].filter(a=>a.getClientRects().length);
@@ -115,10 +137,15 @@ async function selectCard(expected){
   anchor.addEventListener('click',event=>event.preventDefault(),{once:true});
   anchor.click();
 }
-async function captureExpected(expected){
-  const current=currentExpected();
-  if(!current||current.id!==expected.id){await selectCard(expected);}
-  const result=await readPanel(expected);
+async function captureExpected(expected,index=0,paced=true){
+  if(paced)await paceBeforeDetail(index);
+  let result=await readPanelOnce(expected);
+  if(!result){
+    if(paced)await paceBeforeDetail(index);
+    const current=currentExpected();
+    if(!current||current.id!==expected.id)await selectCard(expected);
+    result=await readPanel(expected);
+  }
   const record=toRecord(result,expected);saveRecord(record);return record;
 }
 async function downloadRecords(){
@@ -127,8 +154,8 @@ async function downloadRecords(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='boss-visible-jds-'+Date.now()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 async function runAuto(force=false){
-  if(state.busy||state.autoState?.phase==='done'||(state.autoState?.phase==='stopped'&&!force))return;
-  state.busy=true;state.autoState={phase:'running',listingKey:location.pathname+location.search};await storageSet({[AUTO_STATE]:state.autoState});auto.disabled=true;capture.disabled=true;box.querySelector('.close').disabled=true;
+  if(state.busy||state.autoState?.phase==='running'||state.autoState?.phase==='done'||(state.autoState?.phase==='stopped'&&!force))return;
+  state.busy=true;state.autoState={phase:'running',listingKey:location.pathname+location.search,lastDetailActionAt:Date.now()};await storageSet({[AUTO_STATE]:state.autoState});auto.disabled=true;capture.disabled=true;box.querySelector('.close').disabled=true;
   try{
     if(!onSearchPage())throw new Error('请先打开 BOSS 搜索结果页');
     const listing=extractPage({platform:'boss',kind:'listing'});
@@ -137,10 +164,9 @@ async function runAuto(force=false){
     if(listing.status!=='ok'||!listing.jobs?.length)throw new Error('当前页没有可读取的岗位卡片');
     const jobs=listing.jobs.slice(0,2);
     for(let i=0;i<jobs.length;i++){
-      if(i>0){const wait=15000+Math.floor(Math.random()*6001);show('等待 '+Math.round(wait/1000)+' 秒后读取第 '+(i+1)+' 条……');await sleep(wait);}
       const expected=expectedFromJob(jobs[i]);
       if(!expected||!expected.title)throw new Error('岗位身份不完整，自动采集停止');
-      const record=await captureExpected(expected);
+      const record=await captureExpected(expected,i,true);
       show('已读取第 '+(i+1)+' 条：'+record.title+'\n正文：'+record.description.length+' 字\n累计：'+state.records.length+' 条');
     }
     state.autoState={phase:'done',listingKey:location.pathname+location.search};await storageSet({[AUTO_STATE]:state.autoState,[KEY]:state.records});await downloadRecords();show('自动采集完成：'+state.records.length+' 条，已自动导出 JSON。');
@@ -169,7 +195,7 @@ writeFileSync(join(out,'popup.html'),popup);
 writeFileSync(join(out,'popup.js'),popupJs);
 const background=`const HOME='https://www.zhipin.com/web/geek/jobs';
 async function openSearch(){const tabs=await chrome.tabs.query({});const existing=tabs.find(t=>{try{return new URL(t.url||'').hostname.endsWith('zhipin.com');}catch{return false;}});if(existing?.id)await chrome.tabs.update(existing.id,{url:HOME,active:true});else await chrome.tabs.create({url:HOME,active:true});}
-chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove(['careerOpsBossAutoStateV1','careerOpsBossSearchStateV1']);await openSearch();});
+chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove(['careerOpsBossAutoStateV1','careerOpsBossSearchStateV1','careerOpsBossCityStateV1']);await openSearch();});
 chrome.runtime.onStartup.addListener(openSearch);`;
 writeFileSync(join(out,'content.js'),content);
 writeFileSync(join(out,'background.js'),background);
