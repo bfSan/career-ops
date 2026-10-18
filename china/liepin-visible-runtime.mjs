@@ -174,7 +174,7 @@ export function createLiepinVisibleRuntime({chrome, dom, href, now = () => Date.
     busy = true;
     try {
       const hello = await send({type: 'HELLO', href: href()});
-      if (!hello?.owner) { dom.show('非本批 owner 标签：不执行任何网站动作。'); return {owner: false}; }
+      if (!hello?.owner) { dom.show('非本批 owner 标签：不执行任何网站动作。\n' + (hello?.message || '未提供诊断')); return {owner: false}; }
       current = hello.batch;
       if (!hello.ok || current?.status !== 'running') { dom.show('批次已停止或完成；刷新不会重新开始。'); return {terminal: true}; }
       const batch = current, s = dom.snapshot(batch);

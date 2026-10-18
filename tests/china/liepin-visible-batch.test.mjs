@@ -129,8 +129,9 @@ test('worker enforces shared 15-second actions and exports one successful batch 
   r = await call(worker, {type: 'RESERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, kind: 'search', snapshot: {href, blank: false, gate: 'ok', inputValue: 'AI Agent', searchButton: true}}, own());
   assert.equal(r.ok, true);
   href = 'https://www.liepin.com/zhaopin/?key=AI%20Agent'; doc = 'd2'; chrome._tabs.get(ownerId).url = href;
-  r = await call(worker, {type: 'HELLO', href}, own()); assert.equal(r.ok, true);
-  r = await call(worker, {type: 'OBSERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, snapshot: listSnapshot({href, city: '上海', selected: '', cityQuote: ''})}, own()); assert.equal(r.batch.stage, 'city-ready');
+  const spaSender = {tab: {id: ownerId, url: href}, url: HOME, documentId: doc, frameId: 0};
+  r = await call(worker, {type: 'HELLO', href}, spaSender); assert.equal(r.ok, true);
+  r = await call(worker, {type: 'OBSERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, snapshot: listSnapshot({href, city: '上海', selected: '', cityQuote: ''})}, spaSender); assert.equal(r.batch.stage, 'city-ready');
   time.advance(15000);
   r = await call(worker, {type: 'RESERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, kind: 'city-select', snapshot: {...listSnapshot({href, city: '上海', selected: '', cityQuote: ''}), exactCityOption: true}}, own()); assert.equal(r.ok, true);
   href = 'https://www.liepin.com/zhaopin/?key=AI%20Agent&city=310100'; doc = 'd3'; chrome._tabs.get(ownerId).url = href;

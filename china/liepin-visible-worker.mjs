@@ -53,7 +53,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
     if (compare && (message.revision !== value.revision || message.stage !== value.stage)) throw new Error('阶段锁或旧版本冲突');
     if (value.documentId !== pageDocumentId(sender)) throw new Error('旧页面文档拒绝');
     const tab = await chrome.tabs.get(value.ownerTabId);
-    if (!tab || tab.id !== value.ownerTabId || tab.url !== message.href || sender.url !== message.href) throw new Error('owner 页面 URL 已变化');
+    if (!tab || tab.id !== value.ownerTabId || tab.url !== message.href) throw new Error('owner 页面 URL 已变化');
     if (!url(message.href) || haltUrl(message.href)) throw new Error('owner 页面已进入登录、挑战或非猎聘地址');
     return tab;
   }
@@ -132,10 +132,10 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
       return {ok: true, receipt: clone(receipt), batch: clone(value)};
     }
     if (message.type === 'HELLO') {
-      if (!isPage(value, sender)) return {ok: false, owner: false};
+      if (!isPage(value, sender)) return {ok: false, owner: false, message: `owner tab不匹配：senderTab=${sender?.tab?.id ?? 'none'}, ownerTab=${value?.ownerTabId ?? 'none'}, frame=${sender?.frameId ?? 'none'}, status=${value?.status ?? 'none'}`};
       if (value.version !== VERSION || !Number.isSafeInteger(value.revision) || !Array.isArray(value.jobs) || !Array.isArray(value.records) || !Array.isArray(value.actions) || value.id !== value.batchId) return {ok:false,owner:true,batch:clone(await stop(value,'旧格式或损坏的批次状态，禁止自动恢复'))};
       const tab = await chrome.tabs.get(value.ownerTabId);
-      if (!tab || tab.url !== sender.url || message.href !== sender.url) return {ok: false, owner: false};
+      if (!tab || tab.url !== message.href) return {ok: false, owner: false, message: `owner URL不匹配：tab=${tab?.url || 'none'}, sender=${sender.url || 'none'}, page=${message.href || 'none'}`};
       if (!url(tab.url) || haltUrl(tab.url)) return {ok: false, owner: true, batch: clone(await stop(value, 'owner 标签进入挑战、登录或非猎聘地址'))};
       const documentId = pageDocumentId(sender);
       if (value.documentId && value.documentId !== documentId && !navigationExpected(value, tab.url)) return {ok: false, owner: true, batch: clone(await stop(value, '非预期刷新或文档身份变化，必须显式新开始'))};
