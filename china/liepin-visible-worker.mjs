@@ -22,6 +22,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
     } catch { return null; }
   }
   const listing = value => { const u = url(value); return u && /^\/zhaopin\/?$/.test(u.pathname) ? u : null; };
+  const home = value => { const u = listing(value); return !!u && !u.search && !u.hash; };
   const job = value => { const u = url(value); return u && /^\/(?:job|a)\/\d+\.shtml$/.test(u.pathname) ? 'https://www.liepin.com' + u.pathname : null; };
   function haltUrl(value) {
     try { const u = new URL(value); return u.hostname === 'safe.liepin.com' || /captcha|security|passport|login/i.test(u.pathname) || u.hostname === 'wow.liepin.com'; }
@@ -86,7 +87,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
   };
   function waitMs(last) { return last ? Math.max(0, policy.intervalMs - (now() - Date.parse(last))) : 0; }
   function navigationExpected(value, href) {
-    if (value.stage === 'opening') return href === HOME;
+    if (value.stage === 'opening') return home(href);
     if (value.stage === 'search-await') { try { return exactKeyword({href, inputValue: value.keyword}, value); } catch { return false; } }
     if (value.stage === 'city-await') { const u = listing(href); return !!u && u.searchParams.get('key') === value.keyword && !!u.searchParams.get('city'); }
     if (value.stage === 'job-await') return job(href) === job(value.jobs[value.records.length]?.url);
@@ -156,7 +157,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
         const s = message.snapshot;
         let patch;
         if (value.stage === 'opening') {
-          if (s.href !== HOME || !listing(s.href)) throw new Error('开始页不是无参数列表');
+          if (!home(s.href)) throw new Error('开始页不是无参数列表');
           if (s.searchInputStatus === 'ambiguous' || s.searchButtonStatus === 'ambiguous') throw new Error('opening搜索控件歧义：' + JSON.stringify(s.searchDiagnostics || {}));
           if (!s.searchInput || !s.searchButton) return {ok: true, waiting: true, reason: '等待可见搜索控件渲染', diagnostics: s.searchDiagnostics || {}, batch: clone(value)};
           patch = {stage: 'keyword-ready'};

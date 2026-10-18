@@ -31,9 +31,12 @@ export function createLiepinVisibleDom({window, document, location, history, ext
   function searchButtonInfo(input = searchInput()) {
     if (!input) return {status: 'missing', element: null, diagnostics: []};
     const root = input.closest?.('form') || document;
-    const candidates = [...new Set(all(root, 'button[type="submit"],input[type="submit"],button.btn-search,.btn-search').concat(all(root, 'button,a,[role="button"]').filter(element => text(element) === '搜索')))].filter(element => String(element.type || '').toLowerCase() !== 'password');
-    if (candidates.length === 1) return {status: 'ready', element: candidates[0], diagnostics: searchDiagnostics(candidates)};
-    return {status: candidates.length ? 'ambiguous' : 'missing', element: null, diagnostics: searchDiagnostics(candidates)};
+    const exact = all(root, 'button,a,[role="button"],div,span').filter(element => text(element) === '搜索');
+    const leaves = exact.filter(element => !exact.some(other => other !== element && element.contains(other)));
+    const candidates = [...new Set(all(root, 'button[type="submit"],input[type="submit"],button.btn-search,.btn-search').concat(leaves))].filter(element => String(element.type || '').toLowerCase() !== 'password');
+    const unique = candidates.filter(element => !candidates.some(other => other !== element && element.contains(other)));
+    if (unique.length === 1) return {status: 'ready', element: unique[0], diagnostics: searchDiagnostics(unique)};
+    return {status: unique.length ? 'ambiguous' : 'missing', element: null, diagnostics: searchDiagnostics(unique)};
   }
   function searchButton(input = searchInput()) { return searchButtonInfo(input).element; }
   function exactControl(root, label) {
@@ -179,7 +182,7 @@ export function createLiepinVisibleRuntime({chrome, dom, href, now = () => Date.
       if (s.blank || s.gate !== 'ok') { await halt(batch, s.blank ? '可见页面空白' : '页面门槛：' + s.gate); return {halted: true}; }
       const timedStages = ['opening','keyword-ready','keyword-filled','search-await','city-dialog-await','city-await','job-await','list-await','city-input-set'];
       const stageStarted = Date.parse(batch.stageSince || batch.startedAt);
-      if (timedStages.includes(batch.stage) && Number.isFinite(stageStarted) && now() - stageStarted > 45000) { await halt(batch, '阶段 ' + batch.stage + ' 等待可见页面证据超过45秒；不重复点击'); return {halted: true}; }
+      if (timedStages.includes(batch.stage) && Number.isFinite(stageStarted) && now() - stageStarted >= 45000) { const detail = ['opening','keyword-ready','keyword-filled'].includes(batch.stage) ? '；控件诊断：' + JSON.stringify(s.searchDiagnostics || {}) : ''; await halt(batch, '阶段 ' + batch.stage + ' 等待可见页面证据超过45秒；不重复点击' + detail); return {halted: true}; }
       const observeStages = ['opening','search-await','city-dialog-await','city-await','listing-ready','job-await','list-await'];
       if (observeStages.includes(batch.stage) || (batch.stage === 'city-ready' && s.selectedCity === batch.city)) {
         const result = await send({type: 'OBSERVE', ...base(batch), snapshot: s});
