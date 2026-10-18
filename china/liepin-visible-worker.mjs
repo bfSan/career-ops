@@ -43,14 +43,15 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
   function isControl(sender) {
     return !sender?.tab?.url?.startsWith('https:') && sender?.url === extensionUrl('control.html') && (sender.frameId == null || sender.frameId === 0);
   }
+  function pageDocumentId(sender) { return sender?.documentId || `tab:${sender?.tab?.id}:frame:${sender?.frameId ?? 0}`; }
   function isPage(value, sender) {
-    return value && value.status === 'running' && Number.isInteger(sender?.tab?.id) && sender.tab.id === value.ownerTabId && (sender.frameId == null || sender.frameId === 0) && !!sender.documentId;
+    return value && value.status === 'running' && Number.isInteger(sender?.tab?.id) && sender.tab.id === value.ownerTabId && (sender.frameId == null || sender.frameId === 0);
   }
   async function livePage(value, sender, message, {compare = true} = {}) {
     if (!isPage(value, sender)) throw new Error('非 owner 主文档拒绝');
     if (message.batchId !== value.batchId) throw new Error('旧批次消息拒绝');
     if (compare && (message.revision !== value.revision || message.stage !== value.stage)) throw new Error('阶段锁或旧版本冲突');
-    if (value.documentId !== sender.documentId) throw new Error('旧页面文档拒绝');
+    if (value.documentId !== pageDocumentId(sender)) throw new Error('旧页面文档拒绝');
     const tab = await chrome.tabs.get(value.ownerTabId);
     if (!tab || tab.id !== value.ownerTabId || tab.url !== message.href || sender.url !== message.href) throw new Error('owner 页面 URL 已变化');
     if (!url(message.href) || haltUrl(message.href)) throw new Error('owner 页面已进入登录、挑战或非猎聘地址');
@@ -136,8 +137,9 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
       const tab = await chrome.tabs.get(value.ownerTabId);
       if (!tab || tab.url !== sender.url || message.href !== sender.url) return {ok: false, owner: false};
       if (!url(tab.url) || haltUrl(tab.url)) return {ok: false, owner: true, batch: clone(await stop(value, 'owner 标签进入挑战、登录或非猎聘地址'))};
-      if (value.documentId && value.documentId !== sender.documentId && !navigationExpected(value, tab.url)) return {ok: false, owner: true, batch: clone(await stop(value, '非预期刷新或文档身份变化，必须显式新开始'))};
-      if (value.documentId !== sender.documentId) { value = advance(value, {documentId: sender.documentId}); await persist(value); }
+      const documentId = pageDocumentId(sender);
+      if (value.documentId && value.documentId !== documentId && !navigationExpected(value, tab.url)) return {ok: false, owner: true, batch: clone(await stop(value, '非预期刷新或文档身份变化，必须显式新开始'))};
+      if (value.documentId !== documentId) { value = advance(value, {documentId}); await persist(value); }
       return {ok: true, owner: true, batch: clone(value)};
     }
     if (!isPage(value, sender)) return {ok: false, owner: false, message: '非 owner 标签或终止批次拒绝'};
@@ -146,7 +148,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
     } catch (error) { return {ok: false, stale: true, message: error.message}; }
     if (message.type === 'HALT') return {ok: true, batch: clone(await stop(value, message.reason))};
     if (message.type === 'CHECK_ACTION') {
-      if (!value.pendingAction || value.pendingAction.token !== message.token || value.pendingAction.documentId !== sender.documentId || value.pendingAction.dispatched) return {ok:false,message:'动作许可已消费或不属于当前文档'};
+      if (!value.pendingAction || value.pendingAction.token !== message.token || value.pendingAction.documentId !== pageDocumentId(sender) || value.pendingAction.dispatched) return {ok:false,message:'动作许可已消费或不属于当前文档'};
       value=advance(value,{pendingAction:{...value.pendingAction,dispatched:true}});await persist(value);
       return {ok:true,batch:clone(value)};
     }
@@ -225,7 +227,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
         if (remaining) return {ok: false, waitMs: remaining, batch: clone(value)};
         const at = iso(), token = value.batchId + ':' + (value.revision + 1);
         const action = {kind: message.kind, href: message.href, at, ...(message.jobUrl ? {jobUrl: message.jobUrl} : {})};
-        value = advance(value, {stage: nextStage, stageSince: at, actions: [...value.actions, action], pendingAction: {token, kind: message.kind, href: message.href, documentId: sender.documentId}});
+        value = advance(value, {stage: nextStage, stageSince: at, actions: [...value.actions, action], pendingAction: {token, kind: message.kind, href: message.href, documentId: pageDocumentId(sender)}});
         await set({[BATCH_KEY]: value, [LAST_KEY]: at});
         return {ok: true, token, batch: clone(value)};
       }
