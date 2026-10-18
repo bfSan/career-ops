@@ -151,7 +151,8 @@ async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STA
 function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('query');}catch{return false;}}
 async function ensureSearch(){
  if(!onSearchPage()||hasSearchQuery())return true;
- if(state.searchState?.phase==='clicked')return false;
+ if(state.searchState?.phase==='clicked'&&Date.now()-Number(state.searchState.startedAt||0)<15000)return false;
+  state.searchState=null;await storageSet({[SEARCH_STATE]:null});
  try{await fillAndSearch();show('已在可见搜索框填写“'+SEARCH_TERM+'”，并点击搜索；等待结果页……');}catch(error){state.searchState={phase:'stopped',message:error.message};await storageSet({[SEARCH_STATE]:state.searchState});show('搜索停止：'+error.message);}
  return false;
 }

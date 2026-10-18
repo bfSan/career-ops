@@ -115,6 +115,10 @@ npm run china:import -- --platform boss --file /absolute/private/path/boss-jds.j
 
 原始导入记录保存在 `data/china/imports/<hash>.json`，岗位与不可变JD进入同一套存储；标记 `assisted_capture`，最新尝试保留采集方式与原始导入记录路径。重复内容去重，导入不自动入队或投递。这条路径需要正常浏览器与人的配合，不等于独立CLI自动采集已打通。
 
+## 四城双平台保鲜计划
+
+`npm run china:freshness -- preview` 只读取本地 store，输出上海、杭州、南京、福州 × 猎聘/BOSS 的串行保鲜计划；每城每平台最多2条、两条至少15秒。使用 `npm run china:freshness -- build --platform liepin|boss --city 城市` 构建指定城市版本，扩展仍必须在普通Chrome中通过可见搜索框和城市控件交互；完成导出后使用 `npm run china:freshness -- import --platform liepin|boss --file /absolute/export.json` 显式导入。遇到验证、登录或页面异常立即停止当前平台，不自动绕过或重试。
+
 ## 查看与接入 career-ops
 
 冻结的市场研究可以注册为标准 provider。注册只在代码根创建两个薄插件入口，不启用插件、不修改 `config/plugins.yml` 或信任锁：

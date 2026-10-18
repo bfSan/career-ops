@@ -14,6 +14,7 @@
     "china:import": "node china-jobs.mjs import",
     "china:extension": "node china/build-extension.mjs",
     "china:liepin-extension": "node china/build-liepin-extension.mjs",
+    "china:freshness": "node china/freshness-plan.mjs",
     "china:market": "node china-market.mjs",
     "china:companies": "node china-company-analysis.mjs",
     "test:china": "node --test --test-concurrency=4 tests/china/*.test.mjs",
