@@ -9,6 +9,7 @@ const out=join(root,'data','china','extension','liepin-visible');
 mkdirSync(out,{recursive:true,mode:0o700});
 const parser=extractPage.toString();
 const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
+const targetKeyword=JSON.stringify((process.env.CAREER_OPS_KEYWORD||'AI Agent').trim()||'AI Agent');
 const manifest={
   manifest_version:3,
   name:'CareerOps Liepin Visible Capture',
@@ -25,7 +26,7 @@ const content=String.raw`(()=>{
 if(window.__careerOpsLiepinVisibleCapture)return;
 window.__careerOpsLiepinVisibleCapture=true;
 const extractPage=${parser};
-const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV4',SEARCH_STATE='careerOpsLiepinSearchStateV1',CITY_STATE='careerOpsLiepinCityStateV1',SEARCH_TERM='AI Agent',TARGET_CITY=${targetCity};
+const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV4',SEARCH_STATE='careerOpsLiepinSearchStateV1',CITY_STATE='careerOpsLiepinCityStateV1',SEARCH_TERM=${targetKeyword},TARGET_CITY=${targetCity};
 const state={records:[],busy:false,autoState:null,searchState:null,cityState:null};
 const host=document.createElement('div');host.id='career-ops-liepin-visible-host';
 const shadow=host.attachShadow({mode:'closed'});
