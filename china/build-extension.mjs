@@ -8,10 +8,11 @@ const root=getCareerOpsRoot();
 const out=join(root,'data','china','extension','boss-visible');
 mkdirSync(out,{recursive:true,mode:0o700});
 const parser=extractPage.toString();
+const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
 const manifest={
   manifest_version:3,
   name:'CareerOps BOSS Visible Capture',
-  version:'0.3.2',
+  version:'0.3.3',
   description:'Automatically opens a bounded visible BOSS search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.zhipin.com/*','https://zhipin.com/*'],
@@ -24,8 +25,8 @@ const content=String.raw`(()=>{
 if(window.__careerOpsBossVisibleCapture)return;
 window.__careerOpsBossVisibleCapture=true;
 const extractPage=${parser};
-const KEY='careerOpsBossVisibleRecords',AUTO_STATE='careerOpsBossAutoStateV1',SEARCH_STATE='careerOpsBossSearchStateV1',SEARCH_TERM='AI Agent';
-const state={records:[],busy:false,autoState:null,searchState:null};
+const KEY='careerOpsBossVisibleRecords',AUTO_STATE='careerOpsBossAutoStateV1',SEARCH_STATE='careerOpsBossSearchStateV1',CITY_STATE='careerOpsBossCityStateV1',SEARCH_TERM='AI Agent',TARGET_CITY=${targetCity};
+const state={records:[],busy:false,autoState:null,searchState:null,cityState:null};
 const host=document.createElement('div');host.id='career-ops-boss-visible-host';
 const shadow=host.attachShadow({mode:'closed'});
 const style=document.createElement('style');
@@ -54,6 +55,16 @@ async function fillAndSearch(){
  const button=searchButton();if(!button)throw new Error('未找到可见 BOSS 搜索按钮');
  button.click();
  await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
+}
+function cityCandidates(text){return [...document.querySelectorAll('button,a,li,[role="option"],[role="menuitem"],span,div')].filter(el=>visible(el)&&(el.innerText||'').trim()===text).sort((a,b)=>{const score=e=>/(city|location|area|filter|option|menu)/i.test(String(e.className||'')+' '+String(e.getAttribute('aria-label')||''))?0:1;return score(a)-score(b)||a.innerText.length-b.innerText.length;});}
+function cityControl(){return [...document.querySelectorAll('button,[role="button"],div,span')].filter(el=>visible(el)&&/(city|location|area|filter)/i.test(String(el.className||'')+' '+String(el.getAttribute('aria-label')||''))&&(el.innerText||'').trim().length<=12).sort((a,b)=>a.innerText.length-b.innerText.length)[0]||null;}
+async function selectTargetCity(){
+ if(!TARGET_CITY)return true;
+ if(state.cityState?.phase==='done'&&state.cityState.city===TARGET_CITY)return true;
+ if(state.cityState?.phase==='clicked'&&state.cityState.city===TARGET_CITY)return false;
+ const control=cityControl();if(!control)throw new Error('未找到可见 BOSS 城市筛选控件');
+ state.cityState={phase:'clicked',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});control.click();await sleep(300);
+ const item=cityCandidates(TARGET_CITY)[0];if(!item)throw new Error('未找到可见城市：'+TARGET_CITY);item.click();state.cityState={phase:'done',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});return false;
 }
 function expectedFromJob(job){
   const u=new URL(job.url,location.href),id=u.pathname.match(/^\/job_detail\/([A-Za-z0-9_-]+)\.html$/)?.[1];
@@ -136,7 +147,7 @@ async function runAuto(force=false){
   }catch(error){state.autoState={phase:'stopped',listingKey:location.pathname+location.search,message:error.message};await storageSet({[AUTO_STATE]:state.autoState,[KEY]:state.records});show('自动采集停止：'+error.message+'\n已保留：'+state.records.length+' 条');}
   finally{state.busy=false;auto.disabled=false;capture.disabled=false;box.querySelector('.close').disabled=false;}
 }
-async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;state.searchState=saved[SEARCH_STATE]||null;download.disabled=!state.records.length;}
+async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STATE,CITY_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;state.searchState=saved[SEARCH_STATE]||null;state.cityState=saved[CITY_STATE]||null;download.disabled=!state.records.length;}
 function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('query');}catch{return false;}}
 async function ensureSearch(){
  if(!onSearchPage()||hasSearchQuery())return true;
@@ -144,7 +155,7 @@ async function ensureSearch(){
  try{await fillAndSearch();show('已在可见搜索框填写“'+SEARCH_TERM+'”，并点击搜索；等待结果页……');}catch(error){state.searchState={phase:'stopped',message:error.message};await storageSet({[SEARCH_STATE]:state.searchState});show('搜索停止：'+error.message);}
  return false;
 }
-async function maybeAuto(){if(state.busy||!onSearchPage()||!hasSearchQuery())return;const key=location.pathname+location.search;if(state.autoState&&(state.autoState.phase==='done'||state.autoState.phase==='stopped'||state.autoState.phase==='running')&&state.autoState.listingKey===key)return;await runAuto(false);}
+async function maybeAuto(){if(state.busy||!onSearchPage()||!hasSearchQuery())return;const cityReady=await selectTargetCity();if(!cityReady)return;const key=location.pathname+location.search;if(state.autoState&&(state.autoState.phase==='done'||state.autoState.phase==='stopped'||state.autoState.phase==='running')&&state.autoState.listingKey===key)return;await runAuto(false);}
 auto.addEventListener('click',()=>runAuto(true));
 capture.addEventListener('click',async()=>{if(state.busy)return;state.busy=true;capture.disabled=true;auto.disabled=true;try{const expected=currentExpected();if(!expected)throw new Error('当前没有可读岗位');const record=await captureExpected(expected);saveRecord(record);await storageSet({[KEY]:state.records});show('已读取：'+record.title+'\\n正文：'+record.description.length+' 字\\n累计：'+state.records.length+' 条');}catch(error){show('停止：'+error.message);}finally{state.busy=false;capture.disabled=false;auto.disabled=false;}});
 download.addEventListener('click',downloadRecords);

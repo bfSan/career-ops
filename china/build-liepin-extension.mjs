@@ -8,10 +8,11 @@ const root=getCareerOpsRoot();
 const out=join(root,'data','china','extension','liepin-visible');
 mkdirSync(out,{recursive:true,mode:0o700});
 const parser=extractPage.toString();
+const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
 const manifest={
   manifest_version:3,
   name:'CareerOps Liepin Visible Capture',
-  version:'0.4.1',
+  version:'0.4.2',
   description:'Automatically opens a bounded visible Liepin search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.liepin.com/*','https://liepin.com/*','https://c.liepin.com/*'],
@@ -24,8 +25,8 @@ const content=String.raw`(()=>{
 if(window.__careerOpsLiepinVisibleCapture)return;
 window.__careerOpsLiepinVisibleCapture=true;
 const extractPage=${parser};
-const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV4',SEARCH_STATE='careerOpsLiepinSearchStateV1',SEARCH_TERM='AI Agent';
-const state={records:[],busy:false,autoState:null,searchState:null};
+const KEY='careerOpsLiepinVisibleRecords',LAST='careerOpsLiepinVisibleLastCapture',AUTO_STATE='careerOpsLiepinAutoStateV4',SEARCH_STATE='careerOpsLiepinSearchStateV1',CITY_STATE='careerOpsLiepinCityStateV1',SEARCH_TERM='AI Agent',TARGET_CITY=${targetCity};
+const state={records:[],busy:false,autoState:null,searchState:null,cityState:null};
 const host=document.createElement('div');host.id='career-ops-liepin-visible-host';
 const shadow=host.attachShadow({mode:'closed'});
 const style=document.createElement('style');
@@ -54,6 +55,16 @@ async function fillAndSearch(){
  const button=searchButton();if(!button)throw new Error('未找到可见猎聘搜索按钮');
  button.click();await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
 }
+function cityCandidates(text){return [...document.querySelectorAll('button,a,li,[role="option"],[role="menuitem"],span,div')].filter(el=>visible(el)&&(el.innerText||'').trim()===text).sort((a,b)=>{const score=e=>/(city|location|area|filter|option|menu)/i.test(String(e.className||'')+' '+String(e.getAttribute('aria-label')||''))?0:1;return score(a)-score(b)||a.innerText.length-b.innerText.length;});}
+function cityControl(){return [...document.querySelectorAll('button,[role="button"],div,span')].filter(el=>visible(el)&&/(city|location|area|filter)/i.test(String(el.className||'')+' '+String(el.getAttribute('aria-label')||''))&&(el.innerText||'').trim().length<=12).sort((a,b)=>a.innerText.length-b.innerText.length)[0]||null;}
+async function selectTargetCity(){
+ if(!TARGET_CITY)return true;
+ if(state.cityState?.phase==='done'&&state.cityState.city===TARGET_CITY)return true;
+ if(state.cityState?.phase==='clicked'&&state.cityState.city===TARGET_CITY)return false;
+ const control=cityControl();if(!control)throw new Error('未找到可见猎聘城市筛选控件');
+ state.cityState={phase:'clicked',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});control.click();await sleep(300);
+ const item=cityCandidates(TARGET_CITY)[0];if(!item)throw new Error('未找到可见城市：'+TARGET_CITY);item.click();state.cityState={phase:'done',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});return false;
+}
 const isLiepin=()=>['www.liepin.com','liepin.com','c.liepin.com'].includes(location.hostname);
 const jobPath=/^\/(?:job|a)\/\d+\.shtml$/;
 const listingPath=/^\/zhaopin\/?$/;
@@ -63,7 +74,7 @@ function recordFrom(result){
  return {platform:'liepin',url:canonicalUrl(),title:job.title||'',company:job.company||'',location:job.location||'',salaryRaw:job.salaryRaw||'',experience:job.experience||'',education:job.education||'',companySizeRaw:job.companySizeRaw||'',tags:Array.isArray(job.tags)?job.tags:[],advertised:job.advertised===true,listingText:job.listingText||'',description:job.description,complete:true,captureMethod:'browser_extension',observedAt:new Date().toISOString(),sourceText:job.listingText||''};
 }
 function saveRecord(record){const i=state.records.findIndex(r=>r.url===record.url);if(i<0)state.records.push(record);else state.records[i]=record;download.disabled=!state.records.length;}
-async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;state.searchState=saved[SEARCH_STATE]||null;download.disabled=!state.records.length;if(state.autoState?.phase==='running')show('自动采集恢复中：第 '+(state.autoState.index+1)+'/'+state.autoState.jobs.length+' 条\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='stopped')show('自动采集已停止：'+(state.autoState.message||'页面异常')+'\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='done')show('自动采集已完成\\n累计：'+state.records.length+' 条。');else show('已启动。将在可见搜索框填写“'+SEARCH_TERM+'”并点击搜索。\\n累计：'+state.records.length+' 条。');}
+async function restore(){const saved=await storageGet([KEY,AUTO_STATE,SEARCH_STATE,CITY_STATE]);state.records=Array.isArray(saved[KEY])?saved[KEY]:[];state.autoState=saved[AUTO_STATE]||null;state.searchState=saved[SEARCH_STATE]||null;state.cityState=saved[CITY_STATE]||null;download.disabled=!state.records.length;if(state.autoState?.phase==='running')show('自动采集恢复中：第 '+(state.autoState.index+1)+'/'+state.autoState.jobs.length+' 条\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='stopped')show('自动采集已停止：'+(state.autoState.message||'页面异常')+'\\n累计：'+state.records.length+' 条。');else if(state.autoState?.phase==='done')show('自动采集已完成\\n累计：'+state.records.length+' 条。');else show('已启动。将在可见搜索框填写“'+SEARCH_TERM+'”并点击搜索。\\n累计：'+state.records.length+' 条。');}
 async function readCurrent(){
  const result=extractPage({platform:'liepin',kind:'detail'});
  if(result.status==='challenge')throw new Error('检测到验证页，自动采集停止');
@@ -154,6 +165,7 @@ async function ensureSearch(){
 async function maybeAuto(){
   if(state.busy||!isLiepin()||!listingPath.test(location.pathname)||!hasSearchQuery())return;
   const listingKey=location.pathname+location.search;
+  if(!(await selectTargetCity()))return;
   if(state.autoState?.phase==='running')return;
   if(state.autoState?.listingKey===listingKey)return;
   if(state.autoState){state.autoState=null;await persistAuto();}
