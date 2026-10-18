@@ -12,7 +12,7 @@ const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
 const manifest={
   manifest_version:3,
   name:'CareerOps Liepin Visible Capture',
-  version:'0.4.2',
+  version:'0.4.3',
   description:'Automatically opens a bounded visible Liepin search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.liepin.com/*','https://liepin.com/*','https://c.liepin.com/*'],
@@ -44,7 +44,7 @@ const storageSet=value=>new Promise(resolve=>chrome.storage.local.set(value,reso
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=el=>!!el&&!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
 function searchInput(){return ['input[placeholder*="职位"]','input[placeholder*="搜索"]','input[name="key"]','input[type="text"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
-function searchButton(){const direct=['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean);if(direct)return direct;return [...document.querySelectorAll('button,a,div')].find(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim()))||null;}
+function searchButton(){const textual=[...document.querySelectorAll('button,a,div')].find(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim()));if(textual)return textual;return ['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
 function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('key');}catch{return false;}}
 async function fillAndSearch(){
  if(!listingPath.test(location.pathname))throw new Error('当前不是猎聘搜索页');
@@ -53,7 +53,9 @@ async function fillAndSearch(){
  const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter)setter.call(input,SEARCH_TERM);else input.value=SEARCH_TERM;
  input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:SEARCH_TERM}));input.dispatchEvent(new Event('change',{bubbles:true}));
  const button=searchButton();if(!button)throw new Error('未找到可见猎聘搜索按钮');
- button.click();await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
+ button.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));button.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));button.click();
+ await sleep(600);if(!hasSearchQuery()){input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));}
+ await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
 }
 function cityCandidates(text){return [...document.querySelectorAll('button,a,li,[role="option"],[role="menuitem"],span,div')].filter(el=>visible(el)&&(el.innerText||'').trim()===text).sort((a,b)=>{const score=e=>/(city|location|area|filter|option|menu)/i.test(String(e.className||'')+' '+String(e.getAttribute('aria-label')||''))?0:1;return score(a)-score(b)||a.innerText.length-b.innerText.length;});}
 function cityControl(){return [...document.querySelectorAll('button,[role="button"],div,span')].filter(el=>visible(el)&&/(city|location|area|filter)/i.test(String(el.className||'')+' '+String(el.getAttribute('aria-label')||''))&&(el.innerText||'').trim().length<=12).sort((a,b)=>a.innerText.length-b.innerText.length)[0]||null;}
