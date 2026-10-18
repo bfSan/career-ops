@@ -12,7 +12,7 @@ const targetCity=JSON.stringify((process.env.CAREER_OPS_CITY||'').trim());
 const manifest={
   manifest_version:3,
   name:'CareerOps Liepin Visible Capture',
-  version:'0.4.3',
+  version:'0.4.4',
   description:'Automatically opens a bounded visible Liepin search and captures two jobs; no debugger, cookies or private APIs.',
   permissions:['activeTab','scripting','storage','tabs'],
   host_permissions:['https://www.liepin.com/*','https://liepin.com/*','https://c.liepin.com/*'],
@@ -44,7 +44,7 @@ const storageSet=value=>new Promise(resolve=>chrome.storage.local.set(value,reso
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=el=>!!el&&!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
 function searchInput(){return ['input[placeholder*="职位"]','input[placeholder*="搜索"]','input[name="key"]','input[type="text"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
-function searchButton(){const textual=[...document.querySelectorAll('button,a,[role="button"],div,span')].filter(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim())).sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;})[0];if(textual)return textual;return ['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
+function searchButton(){const input=searchInput();const form=input?.closest('form');const scoped=[...(form||document).querySelectorAll('button[type="submit"],input[type="submit"],button.btn-search,.btn-search')].filter(visible);if(scoped.length)return scoped.sort((a,b)=>a.getBoundingClientRect().width*a.getBoundingClientRect().height-b.getBoundingClientRect().width*b.getBoundingClientRect().height)[0];const textual=[...document.querySelectorAll('button,a,[role="button"],div,span')].filter(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim())).sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;})[0];return textual||null;}
 function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('key');}catch{return false;}}
 async function fillAndSearch(){
  if(!listingPath.test(location.pathname))throw new Error('当前不是猎聘搜索页');
@@ -53,8 +53,8 @@ async function fillAndSearch(){
  const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter)setter.call(input,SEARCH_TERM);else input.value=SEARCH_TERM;
  input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:SEARCH_TERM}));input.dispatchEvent(new Event('change',{bubbles:true}));
  const button=searchButton();if(!button)throw new Error('未找到可见猎聘搜索按钮');
- button.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));button.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));button.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));button.click();
- await sleep(600);if(!hasSearchQuery()){input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));input.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',code:'Enter',bubbles:true,cancelable:true}));}
+ button.focus();for(const type of ['pointerdown','mousedown','pointerup','mouseup','click'])button.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window}));button.click();
+ await sleep(800);if(!hasSearchQuery()){for(const type of ['keydown','keypress','keyup'])input.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));}
  await storageSet({[SEARCH_STATE]:{phase:'clicked',term:SEARCH_TERM,startedAt:Date.now()}});
 }
 function cityCandidates(text){return [...document.querySelectorAll('button,a,li,[role="option"],[role="menuitem"],span,div')].filter(el=>visible(el)&&(el.innerText||'').trim()===text).sort((a,b)=>{const score=e=>/(city|location|area|filter|option|menu)/i.test(String(e.className||'')+' '+String(e.getAttribute('aria-label')||''))?0:1;return score(a)-score(b)||a.innerText.length-b.innerText.length;});}
@@ -62,10 +62,14 @@ function cityControl(){return [...document.querySelectorAll('button,[role="butto
 async function selectTargetCity(){
  if(!TARGET_CITY)return true;
  if(state.cityState?.phase==='done'&&state.cityState.city===TARGET_CITY)return true;
- if(state.cityState?.phase==='clicked'&&state.cityState.city===TARGET_CITY)return false;
+ if(state.cityState?.phase==='clicked'&&state.cityState.city===TARGET_CITY&&Date.now()-Number(state.cityState.startedAt||0)<15000)return false;
+ if(state.cityState?.phase==='clicked'){state.cityState=null;await storageSet({[CITY_STATE]:null});}
  const control=cityControl();if(!control)throw new Error('未找到可见猎聘城市筛选控件');
- state.cityState={phase:'clicked',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});control.click();await sleep(300);
- const item=cityCandidates(TARGET_CITY)[0];if(!item)throw new Error('未找到可见城市：'+TARGET_CITY);item.click();state.cityState={phase:'done',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});return false;
+ state.cityState={phase:'clicked',city:TARGET_CITY,startedAt:Date.now()};await storageSet({[CITY_STATE]:state.cityState});control.click();await sleep(300);
+ let item=cityCandidates(TARGET_CITY)[0];
+  if(!item){const citySearch=[...document.querySelectorAll('input')].find(el=>visible(el)&&/搜索城市|城市/.test(String(el.placeholder||'')));if(citySearch){citySearch.focus();citySearch.select();const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter)setter.call(citySearch,TARGET_CITY);else citySearch.value=TARGET_CITY;citySearch.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:TARGET_CITY}));citySearch.dispatchEvent(new Event('change',{bubbles:true}));await sleep(700);item=cityCandidates(TARGET_CITY)[0];}}
+  if(!item){const more=[...document.querySelectorAll('button,a,li,[role="option"],[role="menuitem"],span,div')].filter(el=>visible(el)&&/^(其他|更多)$/.test((el.innerText||'').trim())).sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;})[0];if(more){more.click();await sleep(700);item=cityCandidates(TARGET_CITY)[0];}}
+  if(!item)throw new Error('未找到可见城市：'+TARGET_CITY);item.click();state.cityState={phase:'done',city:TARGET_CITY};await storageSet({[CITY_STATE]:state.cityState});return false;
 }
 const isLiepin=()=>['www.liepin.com','liepin.com','c.liepin.com'].includes(location.hostname);
 const jobPath=/^\/(?:job|a)\/\d+\.shtml$/;
