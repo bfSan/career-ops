@@ -109,7 +109,13 @@ export async function main(args=process.argv.slice(2)) {
   if(command==='import') {
     if(!v.file) throw new Error('--file is required');
     if(statSync(v.file).size>10*1024*1024) throw new Error('Import file exceeds 10 MiB');
-    console.log(JSON.stringify(await importJobs(root,{platform,records:JSON.parse(readFileSync(v.file,'utf8'))}),null,2));
+    const payload=JSON.parse(readFileSync(v.file,'utf8'));
+    const records=Array.isArray(payload)?payload:payload?.records;
+    // A schema-2 Liepin import must reach the validator as the complete
+    // envelope. Passing only payload.batch would discard kind, records and
+    // search provenance and could turn a mixed batch into a verified import.
+    const batchContext=Array.isArray(payload)?null:payload;
+    console.log(JSON.stringify(await importJobs(root,{platform,records,batchContext}),null,2));
     return 0;
   }
   if(command==='list') {

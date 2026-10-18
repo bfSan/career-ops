@@ -102,7 +102,7 @@ Playwright方式继续原有保护：BOSS `/web/passport/zp/security.html?code=3
 如果普通Chrome能正常看岗位、独立自动化会话却反复验证，使用这一入口：
 
 1. 在平时使用的Chrome里登录，手动打开岗位详情，保留页面。
-2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。Linux BOSS 也可构建普通 Chrome 扩展（`npm run china:extension`）：扩展安装/更新后只打开不带查询参数的 BOSS 搜索页，由内容脚本在可见搜索框填写 `AI Agent`、派发输入事件并点击可见“搜索”按钮；结果页确认后自动读取当前页前最多2条岗位并自动导出。城市筛选同样只能通过可见城市控件点击，构建时可用 `CAREER_OPS_CITY=南京 npm run china:extension` 指定目标城市；不设置则不指定城市。两条之间至少15秒并带随机抖动，遇到验证、登录门槛、页面身份变化或不完整正文立即停止。扩展不连接调试器、不读取 Cookie、不调用私有 API；申请 `activeTab`、`scripting`、`storage`、`tabs` 以及 BOSS 页面匹配范围的 host permission。BOSS 仍可能因账号/环境风控进入安全验证页，遇到后必须人工处理或停止，不自动重试。BOSS 扩展自动批次现在模仿 Mac/native 路线：首条详情前也支付15–21秒间隔，每条详情动作统一节流，先读取当前已选面板，只有面板不完整时才再次等待后点击岗位卡片。Linux 专用 Chrome 当前可能直连公网 IPv6；若站点把该出口标记为异常，扩展不自动切换网络，必须先由用户确认 IPv4/家庭宽带出口恢复，再做单批验证。猎聘默认不再使用 CDP/native 连续点击作为低风控路线；可构建 `npm run china:liepin-extension`，在普通 Chrome 中，扩展安装/更新后只打开不带 `key` 的搜索页，由内容脚本在可见搜索框填写 `AI Agent` 并点击可见“搜索”按钮；结果页确认后自动启动一次最多2条的可见页面读取，无需用户手动搜索或点击采集按钮。城市筛选同样只能通过可见城市控件点击，构建时可用 `CAREER_OPS_CITY=南京 npm run china:liepin-extension` 指定目标城市；不设置则不指定城市。扩展通过当前列表中的岗位卡片进行有限点击，两条之间至少15秒并带随机抖动，详情页重载后从扩展存储恢复进度，返回列表失败、验证、登录门槛或页面身份变化立即停止。也可手动打开完整岗位详情后点击“读取当前岗位”。扩展不读取 Cookie、不调用私有 API、不连接调试器，导出同一 `browser_extension` import 格式；此路线不能保证平台永不验证。
+2. 让Codex通过可见页面读取标题、公司、原始薪资、要求和完整职位描述。先使用原生窗口读取；不要为了读取而刷新页面、重新打开会话或复制Cookie。Linux BOSS 也可构建普通 Chrome 扩展（`npm run china:extension`）：扩展安装/更新后只打开不带查询参数的 BOSS 搜索页，由内容脚本在可见搜索框填写 `AI Agent`、派发输入事件并点击可见“搜索”按钮；结果页确认后自动读取当前页前最多2条岗位并自动导出。城市筛选同样只能通过可见城市控件点击，构建时可用 `CAREER_OPS_CITY=南京 npm run china:extension` 指定目标城市；不设置则不指定城市。两条之间至少15秒并带随机抖动，遇到验证、登录门槛、页面身份变化或不完整正文立即停止。扩展不连接调试器、不读取 Cookie、不调用私有 API；申请 `activeTab`、`scripting`、`storage`、`tabs` 以及 BOSS 页面匹配范围的 host permission。BOSS 仍可能因账号/环境风控进入安全验证页，遇到后必须人工处理或停止，不自动重试。BOSS 扩展自动批次现在模仿 Mac/native 路线：首条详情前也支付15–21秒间隔，每条详情动作统一节流，先读取当前已选面板，只有面板不完整时才再次等待后点击岗位卡片。Linux 专用 Chrome 当前可能直连公网 IPv6；若站点把该出口标记为异常，扩展不自动切换网络，必须先由用户确认 IPv4/家庭宽带出口恢复，再做单批验证。猎聘使用 `npm run china:liepin-extension` 构建普通 Chrome 扩展。2.0.0 起，安装、更新和浏览器启动均不会自动请求站点；从扩展弹窗打开本地批次控制页，选择城市与 `AI Agent`/`FDE` 后点击开始。扩展只新建一个 owner 标签，自动打开无参数搜索页、填写可见输入框并点击搜索一次，然后通过可见城市控件筛选；福州使用“其他 → 搜索城市 → 精确福州”路径。只有 URL 关键词、可见输入值、当前页面已选城市及岗位身份均匹配才读取最多2条。所有程序网站动作至少间隔15秒，其他旧标签不执行任何网站动作；暂停、验证、登录、空白、城市/关键词或岗位身份变化都会持久化硬停，刷新不自动重试。控制页在批次成功时自动导出一次 schemaVersion 2 回执，导出仅含本批记录、列表证据、owner 标签ID和操作时间；手动重导仍可用。扩展不读取 Cookie、不调用私有 API、不连接调试器。旧版累计数组仍可按 legacy 导入，但不能证明任何城市/关键词批次覆盖。该版本当前已通过离线回归，真实站点采集是否通过须以实际回执为准，不能由离线测试推断。
 3. 将真实读取到的字段整理为本地JSON数组，然后导入：
 
 ```bash
@@ -117,7 +117,7 @@ npm run china:import -- --platform boss --file /absolute/private/path/boss-jds.j
 
 ## 四城双平台保鲜计划
 
-`npm run china:freshness -- preview` 只读取本地 store，输出上海、杭州、南京、福州 × 猎聘/BOSS 的串行保鲜计划；每城每平台最多2条、两条至少15秒。使用 `npm run china:freshness -- build --platform liepin|boss --city 城市` 构建指定城市版本，扩展仍必须在普通Chrome中通过可见搜索框和城市控件交互；完成导出后使用 `npm run china:freshness -- import --platform liepin|boss --file /absolute/export.json` 显式导入。遇到验证、登录或页面异常立即停止当前平台，不自动绕过或重试。
+`npm run china:freshness -- preview` 只读取本地 store，输出上海、杭州、南京、福州 × (`AI Agent`、`FDE`) 的猎聘保鲜计划；每城每关键词最多2条、两条至少15秒。使用 `npm run china:freshness -- build --platform liepin --city 城市 --keyword 'AI Agent|FDE'` 构建参数版本；新版猎聘扩展通过本地可见控制页显式开始单标签批次，批次回执包含关键词、城市、列表证据、岗位身份、动作时间和导出边界，禁止复用旧标签或累计库存数组。完成后使用 `npm run china:freshness -- import --platform liepin --file /absolute/receipt.json` 显式导入完整 `schemaVersion:2` 回执；旧数组只作为 legacy 导入，不能证明关键词/城市批次。遇到验证、登录或页面异常立即停止当前批次，不自动绕过或重试。
 
 ## 查看与接入 career-ops
 
