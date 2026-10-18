@@ -15,20 +15,27 @@ export function createLiepinVisibleDom({window, document, location, history, ext
     if (input) { let parent = input.parentElement; for (let i = 0; parent && i < 5; i++, parent = parent.parentElement) if (text(parent).includes('请选择城市')) roots.push(parent); }
     return roots.filter(e => text(e).includes('请选择城市') && all(e, 'input[placeholder="搜索城市"]').length === 1).sort((a,b) => text(a).length - text(b).length)[0] || null;
   }
-  function searchInput() {
-    for (const selector of ['input[name="key"]', 'input[placeholder*="职位"]', 'input[placeholder*="搜索"]']) {
-      const inputs = all(document, selector).filter(e => e.getAttribute('placeholder') !== '搜索城市' && e.type !== 'hidden');
-      if (inputs.length === 1) return inputs[0];
-    }
-    return null;
+  function searchDiagnostics(elements) {
+    return elements.map(element => ({placeholder: String(element.getAttribute('placeholder') || ''), name: String(element.getAttribute('name') || ''), tag: String(element.tagName || ''), className: String(element.getAttribute('class') || '')}));
   }
-  function searchButton(input = searchInput()) {
-    const root = input?.closest('form') || document;
-    const candidates = all(root, 'button[type="submit"],input[type="submit"],button.btn-search,.btn-search');
-    if (candidates.length === 1) return candidates[0];
-    const exact = all(root, 'button,a,[role="button"]').filter(e => text(e) === '搜索');
-    return exact.length === 1 ? exact[0] : null;
+  function searchInputInfo() {
+    const selectors = ['input[name="key"]', 'input[placeholder*="职位"]', 'input[placeholder*="搜索"]'];
+    const candidates = [...new Set(selectors.flatMap(selector => all(document, selector)))].filter(element => {
+      const type = String(element.type || '').toLowerCase();
+      return type !== 'hidden' && type !== 'password' && element.getAttribute('placeholder') !== '搜索城市';
+    });
+    if (candidates.length === 1) return {status: 'ready', element: candidates[0], diagnostics: searchDiagnostics(candidates)};
+    return {status: candidates.length ? 'ambiguous' : 'missing', element: null, diagnostics: searchDiagnostics(candidates)};
   }
+  function searchInput() { return searchInputInfo().element; }
+  function searchButtonInfo(input = searchInput()) {
+    if (!input) return {status: 'missing', element: null, diagnostics: []};
+    const root = input.closest?.('form') || document;
+    const candidates = [...new Set(all(root, 'button[type="submit"],input[type="submit"],button.btn-search,.btn-search').concat(all(root, 'button,a,[role="button"]').filter(element => text(element) === '搜索')))].filter(element => String(element.type || '').toLowerCase() !== 'password');
+    if (candidates.length === 1) return {status: 'ready', element: candidates[0], diagnostics: searchDiagnostics(candidates)};
+    return {status: candidates.length ? 'ambiguous' : 'missing', element: null, diagnostics: searchDiagnostics(candidates)};
+  }
+  function searchButton(input = searchInput()) { return searchButtonInfo(input).element; }
   function exactControl(root, label) {
     const candidates = all(root, 'button,a,li,[role="option"],[role="menuitem"],span,div').filter(e => text(e) === label);
     const leaves = candidates.filter(e => !candidates.some(other => other !== e && e.contains(other)));
@@ -63,7 +70,7 @@ export function createLiepinVisibleDom({window, document, location, history, ext
     try { return extractPage({platform: 'liepin', kind}); } catch { return {status: 'extraction_failed', jobs: []}; }
   }
   function snapshot(batch) {
-    const href = location.href, u = safeUrl(href), input = searchInput(), dialog = cityDialog();
+    const href = location.href, u = safeUrl(href), inputInfo = searchInputInfo(), input = inputInfo.element, buttonInfo = searchButtonInfo(input), dialog = cityDialog();
     const listing = !!u && listPath.test(u.pathname);
     const extracted = parsed(listing ? 'listing' : 'detail');
     const state = parsed('state');
@@ -86,7 +93,7 @@ export function createLiepinVisibleDom({window, document, location, history, ext
       const j = extracted.job;
       record = {...j, platform: 'liepin', url: jobUrl(href), complete: true, captureMethod: 'browser_extension', observedAt: new Date(now()).toISOString(), sourceText: j.description || '', searchContext: {batchId: batch.batchId, city: batch.city, keyword: batch.keyword, listingHref: batch.evidence?.href}};
     }
-    return {href, blank: !String(document.body?.innerText || '').trim(), gate, inputValue: input?.value ?? '', searchInput: !!input, searchButton: !!searchButton(input), ...city, cityParam: u?.searchParams.get('city') || '', cityDialog: !!dialog, cityInput: !!cityInput, cityInputValue: cityInput?.value ?? '', otherControl: !!row && !!exactControl(row, '其他'), exactCityOption: !!cityOption, jobs, card, record};
+    return {href, blank: !String(document.body?.innerText || '').trim(), gate, inputValue: input?.value ?? '', searchInput: inputInfo.status === 'ready', searchInputStatus: inputInfo.status, searchButton: buttonInfo.status === 'ready', searchButtonStatus: buttonInfo.status, searchDiagnostics: {inputs: inputInfo.diagnostics, buttons: buttonInfo.diagnostics}, ...city, cityParam: u?.searchParams.get('city') || '', cityDialog: !!dialog, cityInput: !!cityInput, cityInputValue: cityInput?.value ?? '', otherControl: !!row && !!exactControl(row, '其他'), exactCityOption: !!cityOption, jobs, card, record};
   }
   function anchors(expected) {
     const matches = all(document, 'a[href*="/job/"],a[href*="/a/"]').filter(a => jobUrl(a.getAttribute('href')) === jobUrl(expected.url));
@@ -170,14 +177,23 @@ export function createLiepinVisibleRuntime({chrome, dom, href, now = () => Date.
       const batch = current, s = dom.snapshot(batch);
       dom.show('批次：' + batch.batchId + '\n' + batch.city + ' / ' + batch.keyword + '\n阶段：' + batch.stage + '\n本批：' + batch.records.length + '/' + (batch.jobs.length || 2));
       if (s.blank || s.gate !== 'ok') { await halt(batch, s.blank ? '可见页面空白' : '页面门槛：' + s.gate); return {halted: true}; }
-      const awaitStages = ['search-await','city-dialog-await','city-await','job-await','list-await','city-input-set'];
-      if (awaitStages.includes(batch.stage) && now() - Date.parse(batch.stageSince) > 45000) { await halt(batch, '等待当前阶段页面证据超时；不重复点击'); return {halted: true}; }
+      const timedStages = ['opening','keyword-ready','keyword-filled','search-await','city-dialog-await','city-await','job-await','list-await','city-input-set'];
+      const stageStarted = Date.parse(batch.stageSince || batch.startedAt);
+      if (timedStages.includes(batch.stage) && Number.isFinite(stageStarted) && now() - stageStarted > 45000) { await halt(batch, '阶段 ' + batch.stage + ' 等待可见页面证据超过45秒；不重复点击'); return {halted: true}; }
       const observeStages = ['opening','search-await','city-dialog-await','city-await','listing-ready','job-await','list-await'];
       if (observeStages.includes(batch.stage) || (batch.stage === 'city-ready' && s.selectedCity === batch.city)) {
         const result = await send({type: 'OBSERVE', ...base(batch), snapshot: s});
         current = result?.batch || current;
         if (result?.halted) dom.show('批次硬停：' + result.message);
         return result;
+      }
+      if (batch.stage === 'keyword-ready') {
+        if (s.searchInputStatus === 'ambiguous' || s.searchButtonStatus === 'ambiguous') { const message = '动作 keyword-input 准备失败：搜索控件歧义 ' + JSON.stringify(s.searchDiagnostics || {}); await halt(batch, message); return {halted: true, message}; }
+        if (!s.searchInput || !s.searchButton) { dom.show('动作 keyword-input 等待可见搜索控件渲染……'); return {waiting: true}; }
+      }
+      if (batch.stage === 'keyword-filled') {
+        if (s.searchButtonStatus === 'ambiguous') { const message = '动作 search 准备失败：搜索按钮歧义 ' + JSON.stringify(s.searchDiagnostics || {}); await halt(batch, message); return {halted: true, message}; }
+        if (!s.searchButton) { dom.show('动作 search 等待可见搜索按钮渲染……'); return {waiting: true}; }
       }
       let kind;
       if (batch.stage === 'keyword-ready') kind = 'keyword-input';
@@ -188,7 +204,9 @@ export function createLiepinVisibleRuntime({chrome, dom, href, now = () => Date.
       else if (batch.stage === 'job-ready') kind = 'job-click';
       else if (batch.stage === 'record-saved') kind = 'history-back';
       else { await halt(batch, '未知或旧阶段，禁止自动恢复'); return {halted: true}; }
-      const prepared = dom.prepare(kind, batch);
+      let prepared;
+      try { prepared = dom.prepare(kind, batch); }
+      catch (error) { const message = '动作 ' + kind + ' 准备失败：' + error.message; await halt(batch, message); return {halted: true, message}; }
       const result = await send({type: 'RESERVE', ...base(batch), kind, snapshot: prepared.snapshot, ...(kind === 'job-click' ? {jobUrl: batch.jobs[batch.records.length]?.url} : {})});
       current = result?.batch || current;
       if (!result?.ok) {

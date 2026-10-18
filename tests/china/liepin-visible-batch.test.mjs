@@ -99,7 +99,7 @@ test('worker rejects cross-tab actions, stale stage messages, and duplicate stag
   time.advance(15000);
   const own = sender(ownerId, HOME);
   let result = await call(worker, {type: 'HELLO', href: HOME}, own); assert.equal(result.ok, true);
-  result = await call(worker, {type: 'OBSERVE', batchId: started.batch.batchId, revision: result.batch.revision, stage: result.batch.stage, href: HOME, snapshot: {href: HOME, blank: false, gate: 'ok'}}, own);
+  result = await call(worker, {type: 'OBSERVE', batchId: started.batch.batchId, revision: result.batch.revision, stage: result.batch.stage, href: HOME, snapshot: {href: HOME, blank: false, gate: 'ok', searchInput: true, searchButton: true, searchInputStatus: 'ready', searchButtonStatus: 'ready'}}, own);
   assert.equal(result.batch.stage, 'keyword-ready');
   const stale = await call(worker, {type: 'RESERVE', batchId: started.batch.batchId, revision: result.batch.revision - 1, stage: 'opening', href: HOME, kind: 'keyword-input', snapshot: {href: HOME, blank: false, gate: 'ok', searchInput: true}}, own);
   assert.equal(stale.stale, true);
@@ -121,9 +121,9 @@ test('worker enforces shared 15-second actions and exports one successful batch 
   const own = () => sender(ownerId, href, doc);
   time.advance(15000);
   let r = await call(worker, {type: 'HELLO', href}, own());
-  r = await call(worker, {type: 'OBSERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, snapshot: {href, blank: false, gate: 'ok'}}, own());
+  r = await call(worker, {type: 'OBSERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, snapshot: {href, blank: false, gate: 'ok', searchInput: true, searchButton: true, searchInputStatus: 'ready', searchButtonStatus: 'ready'}}, own());
   time.advance(15000);
-  r = await call(worker, {type: 'RESERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, kind: 'keyword-input', snapshot: {href, blank: false, gate: 'ok', searchInput: true}}, own());
+  r = await call(worker, {type: 'RESERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, kind: 'keyword-input', snapshot: {href, blank: false, gate: 'ok', searchInput: true, searchButton: true, searchInputStatus: 'ready', searchButtonStatus: 'ready'}}, own());
   assert.equal(r.ok, true);
   time.advance(15000);
   r = await call(worker, {type: 'RESERVE', batchId, revision: r.batch.revision, stage: r.batch.stage, href, kind: 'search', snapshot: {href, blank: false, gate: 'ok', inputValue: 'AI Agent', searchButton: true}}, own());

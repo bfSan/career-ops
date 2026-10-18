@@ -157,6 +157,8 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
         let patch;
         if (value.stage === 'opening') {
           if (s.href !== HOME || !listing(s.href)) throw new Error('开始页不是无参数列表');
+          if (s.searchInputStatus === 'ambiguous' || s.searchButtonStatus === 'ambiguous') throw new Error('opening搜索控件歧义：' + JSON.stringify(s.searchDiagnostics || {}));
+          if (!s.searchInput || !s.searchButton) return {ok: true, waiting: true, reason: '等待可见搜索控件渲染', diagnostics: s.searchDiagnostics || {}, batch: clone(value)};
           patch = {stage: 'keyword-ready'};
         } else if (value.stage === 'search-await') {
           const u = listing(s.href);
