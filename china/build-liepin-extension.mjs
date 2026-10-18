@@ -44,7 +44,7 @@ const storageSet=value=>new Promise(resolve=>chrome.storage.local.set(value,reso
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const visible=el=>!!el&&!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
 function searchInput(){return ['input[placeholder*="职位"]','input[placeholder*="搜索"]','input[name="key"]','input[type="text"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
-function searchButton(){const textual=[...document.querySelectorAll('button,a,div')].find(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim()));if(textual)return textual;return ['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
+function searchButton(){const textual=[...document.querySelectorAll('button,a,[role="button"],div,span')].filter(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim())).sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;})[0];if(textual)return textual;return ['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
 function hasSearchQuery(){try{return !!new URL(location.href).searchParams.get('key');}catch{return false;}}
 async function fillAndSearch(){
  if(!listingPath.test(location.pathname))throw new Error('当前不是猎聘搜索页');
@@ -186,7 +186,7 @@ async function openSearch(){
    if(existing?.id){await chrome.tabs.update(existing.id,{url:HOME,active:true});return;}
    await chrome.tabs.create({url:HOME,active:true});
  }
- chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove(['careerOpsLiepinAutoStateV4','careerOpsLiepinSearchStateV1']);await openSearch();});
+ chrome.runtime.onInstalled.addListener(async()=>{await chrome.storage.local.remove(['careerOpsLiepinAutoStateV4','careerOpsLiepinSearchStateV1','careerOpsLiepinCityStateV1']);await openSearch();});
  chrome.runtime.onStartup.addListener(openSearch);`;
 writeFileSync(join(out,'popup.html'),popup);
 writeFileSync(join(out,'popup.js'),popupJs);

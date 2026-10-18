@@ -45,7 +45,7 @@ const storageSet=value=>new Promise(resolve=>chrome.storage.local.set(value,reso
 const onSearchPage=()=>/^\/web\/geek\/jobs\/?$/.test(location.pathname);
 const visible=el=>!!el&&!!el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none';
 function searchInput(){return ['input.ipt-search','input[name="query"]','input[placeholder*="职位"]','input[placeholder*="搜索"]','input[type="text"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
-function searchButton(){const direct=['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean);if(direct)return direct;return [...document.querySelectorAll('button,a,div')].find(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim()))||null;}
+function searchButton(){const textual=[...document.querySelectorAll('button,a,[role="button"],div,span')].filter(el=>visible(el)&&/^搜索$/.test((el.innerText||'').trim())).sort((a,b)=>{const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();return ra.width*ra.height-rb.width*rb.height;})[0];if(textual)return textual;return ['button.btn-search','.btn-search','button[type="submit"]'].map(s=>[...document.querySelectorAll(s)].find(visible)).find(Boolean)||null;}
 async function fillAndSearch(){
  if(!onSearchPage())throw new Error('当前不是 BOSS 搜索页');
  const input=searchInput();if(!input)throw new Error('未找到可见 BOSS 搜索输入框');
