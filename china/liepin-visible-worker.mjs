@@ -3,7 +3,7 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
   const HOME = 'https://www.liepin.com/zhaopin/';
   const BATCH_KEY = 'careerOpsLiepinVisibleBatchV2';
   const LAST_KEY = 'careerOpsLiepinVisibleLastActionAtV2';
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const hosts = ['www.liepin.com', 'liepin.com', 'c.liepin.com'];
   const iso = () => new Date(now()).toISOString();
   const clone = value => value == null ? value : JSON.parse(JSON.stringify(value));
@@ -122,13 +122,37 @@ export function createLiepinVisibleWorker({chrome, policy, now = () => Date.now(
       if (!isControl(sender)) return {ok: false, message: '只允许控制页停止'};
       return {ok: true, batch: clone(await stop(value, message.reason || '用户在控制页停止'))};
     }
+    if (message.type === 'EXPORT_DISPATCHED') {
+      if (!isControl(sender)) return {ok: false, message: '只允许控制页确认导出'};
+      if (!value || value.status !== 'done' || value.stopReason || message.batchId !== value.batchId || value.exportPreparedBatchId !== value.batchId) return {ok: false, message: '导出确认不属于成功完成的当前批次'};
+      if (value.ownerCleanup && ['closed','already_closed'].includes(value.ownerCleanup.status)) return {ok: true, batch: clone(value)};
+      // The control page has triggered the Blob download. This is not a claim
+      // that the file reached disk; all records remain in storage for re-export.
+      const cleanup = {tabId: value.ownerTabId, at: iso(), status: 'failed'};
+      if (!Number.isInteger(value.ownerTabId)) cleanup.reason = '缺少本批标签身份';
+      else {
+        let tab;
+        try { tab = await chrome.tabs.get(value.ownerTabId); } catch { /* already closed */ }
+        if (!tab) cleanup.status = 'already_closed';
+        else if (tab.id !== value.ownerTabId || !job(tab.url) || job(tab.url) !== job(value.records.at(-1)?.url)) {
+          cleanup.status = 'skipped'; cleanup.reason = '本批标签已改作其他页面，保留不关闭';
+        } else {
+          try { await chrome.tabs.remove(value.ownerTabId); cleanup.status = 'closed'; }
+          catch (error) { cleanup.reason = '关闭本批标签失败：' + error.message; }
+        }
+      }
+      value = advance(value, {exportDispatchedBatchId: value.batchId, ownerCleanup: cleanup}); await persist(value);
+      return {ok: true, batch: clone(value)};
+    }
     if (message.type === 'EXPORT' || message.type === 'AUTO_EXPORT') {
       if (!isControl(sender)) return {ok: false, message: '只允许控制页导出'};
       if (!value || value.status !== 'done' || value.stopReason) return {ok: false, message: '只可导出成功完成的本批1–2条'};
       if (message.type === 'AUTO_EXPORT' && value.exportedBatchId === value.batchId) return {ok: false, already: true, batch: clone(value)};
       const receipt = policy.receipt(value, iso());
       policy.validateReceipt(receipt);
-      if (message.type === 'AUTO_EXPORT') { value = advance(value, {exportedBatchId: value.batchId}); await persist(value); }
+      // Reserve the export only. The owner tab stays open until the control
+      // page acknowledges that download() returned without throwing.
+      value = advance(value, {exportPreparedBatchId: value.batchId, ...(message.type === 'AUTO_EXPORT' ? {exportedBatchId: value.batchId} : {})}); await persist(value);
       return {ok: true, receipt: clone(receipt), batch: clone(value)};
     }
     if (message.type === 'HELLO') {

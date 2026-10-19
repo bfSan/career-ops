@@ -36,6 +36,7 @@ function mockChrome() {
     tabs: {
       async create({url}) { const tab = {id: ++nextId, url}; tabs.set(tab.id, tab); return tab; },
       async get(id) { return tabs.get(id) || null; },
+      async remove(id) { const existed = tabs.delete(id); if (existed) for (const fn of removedListeners) fn(id); },
       onUpdated: {addListener: fn => updatedListeners.push(fn)},
       onRemoved: {addListener: fn => removedListeners.push(fn)},
     },
@@ -151,6 +152,11 @@ test('worker enforces shared 15-second actions and exports one successful batch 
   assert.equal(exported.receipt.schemaVersion, 2); assert.equal(exported.receipt.kind, 'liepin_visible_batch');
   assert.equal(exported.receipt.records.length, 1); assert.equal(exported.receipt.batch.actions.some(a => a.kind === 'search'), true); assert.equal(exported.receipt.batch.actions.some(a => a.kind === 'job-click'), true);
   for (let i = 1; i < exported.receipt.batch.actions.length; i++) assert.ok(Date.parse(exported.receipt.batch.actions[i].at) - Date.parse(exported.receipt.batch.actions[i - 1].at) >= 15000);
+  assert.equal(chrome._tabs.has(ownerId), true, '导出确认前不关闭owner标签');
+  const auto = await call(worker, {type: 'AUTO_EXPORT'}, CONTROL); assert.equal(auto.ok, true);
+  const dispatched = await call(worker, {type: 'EXPORT_DISPATCHED', batchId}, CONTROL);
+  assert.equal(dispatched.ok, true); assert.equal(dispatched.batch.ownerCleanup.status, 'closed');
+  assert.equal(chrome._tabs.has(ownerId), false, '确认下载后只关闭本批owner标签');
 });
 
 test('DOM adapter requires exact 福州 flow and native value events, without synthetic click/Enter retry', () => {

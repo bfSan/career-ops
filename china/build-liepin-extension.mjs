@@ -17,7 +17,7 @@ const defaults = {
 const manifest = {
   manifest_version: 3,
   name: 'CareerOps 猎聘可见单标签批次',
-  version: '2.0.0',
+  version: '2.0.1',
   description: '用户显式开始的1–2条可见单标签批次；不使用调试器、私有接口或自动联系投递。',
   permissions: ['storage', 'tabs'],
   host_permissions: ['https://www.liepin.com/*', 'https://liepin.com/*', 'https://c.liepin.com/*', 'https://safe.liepin.com/*'],
@@ -39,11 +39,12 @@ let starting=false,cancelStart=false,busy=false,autoExporting=false;
 const send=message=>chrome.runtime.sendMessage(message);
 function render(batch){const running=batch?.status==='running';start.disabled=running||starting;stop.disabled=!running&&!starting;city.disabled=running||starting;keyword.disabled=running||starting;exportButton.disabled=batch?.status!=='done';state.textContent=batch?JSON.stringify({batchId:batch.batchId,ownerTabId:batch.ownerTabId,city:batch.city,keyword:batch.keyword,version:batch.version,status:batch.status,stage:batch.stage,records:batch.records.length,stopReason:batch.stopReason,evidence:batch.evidence,actions:batch.actions},null,2):'当前没有批次；点击开始不会复用其他猎聘标签。';}
 function download(receipt){const blob=new Blob([JSON.stringify(receipt,null,2)+'\\n'],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='liepin-visible-batch-'+receipt.batch.id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
-async function autoExport(batch){if(autoExporting||!batch||batch.status!=='done'||batch.exportedBatchId===batch.batchId)return;autoExporting=true;try{const r=await send({type:'AUTO_EXPORT'});if(r?.ok){download(r.receipt);notice.textContent='批次完成，已自动导出仅含本批记录的 schemaVersion 2 回执。';render(r.batch||batch);}}catch(e){notice.textContent='自动导出失败：'+e.message;}finally{autoExporting=false;}}
+async function finishExport(r){download(r.receipt);const done=await send({type:'EXPORT_DISPATCHED',batchId:r.receipt.batch.id});if(!done?.ok)throw new Error(done?.message||'导出清理确认失败');const batch=done.batch||r.batch;notice.textContent=['closed','already_closed'].includes(batch?.ownerCleanup?.status)?'已触发本批回执下载，并关闭本批猎聘标签；控制页与归档数据保留。':'已触发本批回执下载；'+(batch?.ownerCleanup?.reason||'标签清理未确认，可手动重导');render(batch);}
+async function autoExport(batch){if(autoExporting||!batch||batch.status!=='done'||batch.exportedBatchId===batch.batchId)return;autoExporting=true;try{const r=await send({type:'AUTO_EXPORT'});if(r?.ok)await finishExport(r);}catch(e){notice.textContent='自动导出或清理失败（数据仍保留，可手动重导）：'+e.message;}finally{autoExporting=false;}}
 async function refresh(){if(busy)return;busy=true;try{const r=await send({type:'CONTROL_STATE'});render(r.batch);await autoExport(r.batch);}catch(e){notice.textContent='本地状态读取失败：'+e.message;}finally{busy=false;}}
 start.onclick=async()=>{if(starting)return;starting=true;cancelStart=false;const config={city:city.value,keyword:keyword.value};try{while(!cancelStart){const r=await send({type:'START',...config});render(r.batch);if(r.ok){notice.textContent='已新建唯一 owner 标签；仅该标签可发送网站动作。';break;}if(!r.waitMs){notice.textContent=r.message||'未开始';break;}notice.textContent='跨批次动作间隔尚有 '+Math.ceil(r.waitMs/1000)+' 秒；等待期间可停止。';await new Promise(resolve=>setTimeout(resolve,Math.min(800,r.waitMs)));}}catch(e){notice.textContent='开始失败：'+e.message;}finally{starting=false;await refresh();}};
 stop.onclick=async()=>{cancelStart=true;const r=await send({type:'CONTROL_STOP',reason:'用户在可见控制页停止'});notice.textContent='已持久化停止；刷新不会自动重启。';render(r.batch);};
-exportButton.onclick=async()=>{const r=await send({type:'EXPORT'});if(!r.ok){notice.textContent=r.message;return;}download(r.receipt);notice.textContent='已手动导出本批回执。';};
+exportButton.onclick=async()=>{const r=await send({type:'EXPORT'});if(!r.ok){notice.textContent=r.message;return;}try{await finishExport(r);}catch(e){notice.textContent='手动导出或清理失败（数据仍保留）：'+e.message;}};
 refresh();setInterval(refresh,800);
 `;
 mkdirSync(out, {recursive: true, mode: 0o700});
