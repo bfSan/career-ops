@@ -31,14 +31,23 @@ export function createBossBatchPolicy() {
   function validateRecord(r, b) {
     config(b);
     const expected = (b.selectedJobs || b.jobs || [])[(b.records || []).length];
-    if (!r || !expected || jobUrl(r.url) !== jobUrl(expected.url) || !r.title?.trim() || r.title !== expected.title || !belongs(r.location, b.city) || !belongs(expected.location, b.city)) throw new Error('BOSS详情身份或地点不匹配');
+    const detail = {got: {url: r?.url, title: r?.title, location: r?.location}, want: {url: expected?.url, title: expected?.title, location: expected?.location}};
+    if (!r || !expected || jobUrl(r.url) !== jobUrl(expected.url) || !r.title?.trim() || r.title !== expected.title || !belongs(r.location, b.city) || !belongs(expected.location, b.city)) throw new Error('BOSS详情身份或地点不匹配 ' + JSON.stringify(detail).slice(0, 400));
     if (r.captureMethod !== 'browser_extension' || r.complete !== true || typeof r.description !== 'string' || r.description.trim().length < 40) throw new Error('BOSS不是完整可见JD');
     const at = Date.parse(r.observedAt), start = Date.parse(b.startedAt);
     if (!Number.isFinite(at) || at < start || (b.endedAt && at > Date.parse(b.endedAt))) throw new Error('BOSS观测时间无效');
     const prev = (b.records || []).at(-1);
     if (prev && at - Date.parse(prev.observedAt) < intervalMs) throw new Error('BOSS详情观测间隔不足15秒');
     const p = r.searchContext?.panelEvidence;
-    if (!p || jobUrl(p.jobUrl) !== jobUrl(r.url) || p.title !== r.title || p.location !== r.location || p.at !== r.observedAt) throw new Error('BOSS面板身份或时间证据不匹配');
+    if (!p || jobUrl(p.jobUrl) !== jobUrl(r.url) || p.title !== r.title || p.at !== r.observedAt) throw new Error('BOSS面板身份或时间证据不匹配');
+    // BOSS sometimes omits the region in the detail panel. Then the location may
+    // come from the same job's visible listing card, but only if that is recorded
+    // explicitly; it is never inferred or back-filled silently.
+    if (p.location === r.location) {
+      if (r.locationSource !== undefined && r.locationSource !== 'detail_panel') throw new Error('BOSS地点来源标注不匹配 ' + JSON.stringify(detail).slice(0, 400));
+    } else if (p.location === '' && r.locationSource === 'listing_card' && r.location === expected.location) {
+      // allowed: panel had no region, listing card supplied the same job's region
+    } else throw new Error('BOSS地点证据不匹配 ' + JSON.stringify({panel: p.location, record: r.location, source: r.locationSource, want: expected.location}).slice(0, 400));
     return true;
   }
   function validateReceipt(v) {
@@ -54,7 +63,7 @@ export function createBossBatchPolicy() {
     if (!Array.isArray(b.selectedJobs) || b.selectedJobs.length !== v.records.length || new Set(b.selectedJobs.map(j => jobUrl(j.url))).size !== v.records.length) throw new Error('BOSS岗位计划不完整或重复');
     const actions = b.actions;
     if (!Array.isArray(actions) || actions.filter(a => a.kind === 'search').length !== 1) throw new Error('必须有且仅有一次BOSS搜索动作');
-    const allowed = new Set(['open-home','keyword-input','search','city-open','city-select','job-click']);
+    const allowed = new Set(['open-home','keyword-input','search','city-open','city-letter','city-select','job-click']);
     let last = null;
     for (const a of actions) {
       const at = Date.parse(a.at);

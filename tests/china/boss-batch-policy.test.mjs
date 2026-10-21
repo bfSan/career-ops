@@ -27,3 +27,15 @@ const mutations = {
 };
 for (const [name,change] of Object.entries(mutations)) test('BOSS receipt rejects '+name,()=>{const r=bossEnvelope();change(r);assert.throws(()=>p.validateReceipt(r));});
 for (const url of ['http://www.zhipin.com/job_detail/a.html','https://www.zhipin.com:444/job_detail/a.html','https://attacker.test/job_detail/a.html','https://user@www.zhipin.com/job_detail/a.html']) test('BOSS rejects unsafe job URL '+url,()=>assert.throws(()=>p.jobUrl(url)));
+test('BOSS面板缺地区时只接受显式listing_card来源',()=>{
+  const ok=bossEnvelope();ok.records[0].searchContext.panelEvidence.location='';ok.records[0].locationSource='listing_card';
+  assert.equal(p.validateReceipt(ok).records.length,1);
+  const badSource=bossEnvelope();badSource.records[0].searchContext.panelEvidence.location='';badSource.records[0].locationSource='detail_panel';
+  assert.throws(()=>p.validateReceipt(badSource),/地点证据/);
+  const silent=bossEnvelope();silent.records[0].searchContext.panelEvidence.location='';
+  assert.throws(()=>p.validateReceipt(silent),/地点证据/,'未标注来源不得回填');
+  const mismatched=bossEnvelope();mismatched.records[0].searchContext.panelEvidence.location='';mismatched.records[0].locationSource='listing_card';mismatched.records[0].location='上海·浦东新区';
+  assert.throws(()=>p.validateReceipt(mismatched),/地点/);
+  const fromPanel=bossEnvelope();
+  assert.equal(p.validateReceipt(fromPanel).records.length,1,'详情自带地区仍正常');
+});

@@ -3,7 +3,7 @@ export function createBossVisibleWorker({chrome, policy, now=()=>Date.now(), ran
   const HOME='https://www.zhipin.com/web/geek/jobs';
   const KEY='careerOpsBossVisibleBatchV2';
   const LAST='careerOpsBossVisibleLastActionAtV2';
-  const VERSION='2.0.0';
+  const VERSION='2.0.1';
   let serial=Promise.resolve();
   const enqueue=fn=>{const result=serial.then(fn);serial=result.catch(()=>{});return result;};
   const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
@@ -79,7 +79,9 @@ export function createBossVisibleWorker({chrome, policy, now=()=>Date.now(), ran
         if(!snapshot.query)return{ok:true,waiting:true,batch:clone(value)};
         if(snapshot.query!==value.keyword||snapshot.inputValue!==value.keyword)throw new Error('BOSS关键词证据不匹配');patch={stage:'city-ready'};
       }else if(value.stage==='city-menu-await'){
-        patch=snapshot.exactCityOption?{stage:'city-select-ready'}:{stage:'city-menu-await'};
+        patch=snapshot.exactCityOption?{stage:'city-select-ready'}:snapshot.cityLetterTab?{stage:'city-letter-ready'}:{stage:'city-menu-await'};
+      }else if(value.stage==='city-letter-await'){
+        patch=snapshot.exactCityOption?{stage:'city-select-ready'}:{stage:'city-letter-await'};
       }else if(value.stage==='city-await'){
         if(!snapshot.selectedCity)return{ok:true,waiting:true,batch:clone(value)};
         const evidence=policy.listingEvidence({...snapshot,at:iso()},value);patch={evidence,stage:'listing-ready'};
@@ -98,7 +100,8 @@ export function createBossVisibleWorker({chrome, policy, now=()=>Date.now(), ran
           value=advance(value,{stage:'job-ready',stageSince:iso()});await persist(value);return{ok:true,batch:clone(value)};
         }
         const panelEvidence=snapshot.record.searchContext?.panelEvidence;
-        if(!panelEvidence||panelEvidence.at!==snapshot.record.observedAt||panelEvidence.jobUrl!==snapshot.record.url||panelEvidence.title!==snapshot.record.title||panelEvidence.location!==snapshot.record.location)throw new Error('BOSS panelEvidence不完整或与记录不一致');
+        const listingFallback=panelEvidence?.location===''&&snapshot.record.locationSource==='listing_card';
+        if(!panelEvidence||panelEvidence.at!==snapshot.record.observedAt||panelEvidence.jobUrl!==snapshot.record.url||panelEvidence.title!==snapshot.record.title||(!listingFallback&&panelEvidence.location!==snapshot.record.location))throw new Error('BOSS panelEvidence不完整或与记录不一致');
         policy.validateRecord(snapshot.record,{...value,selectedJobs:value.jobs});
         const captureMode=value.stage==='panel-probe'?'current_panel':'clicked_panel';
         const record={...snapshot.record,searchContext:{...snapshot.record.searchContext,batchId:value.id,city:value.city,keyword:value.keyword,listingHref:value.evidence.href,captureMode,panelEvidence}};
@@ -109,13 +112,14 @@ export function createBossVisibleWorker({chrome, policy, now=()=>Date.now(), ran
     if(message.type==='RESERVE'){
       const allowed={
         'keyword-input':{from:'keyword-ready',to:'keyword-filled'},search:{from:'keyword-filled',to:'search-await'},
-        'city-open':{from:'city-ready',to:'city-menu-await'},'city-select':{from:'city-select-ready',to:'city-await'},
+        'city-open':{from:'city-ready',to:'city-menu-await'},'city-letter':{from:'city-letter-ready',to:'city-letter-await'},'city-select':{from:'city-select-ready',to:'city-await'},
         'job-click':{from:'job-ready',to:'panel-await'},
       };
       const rule=allowed[message.kind];if(!rule||value.stage!==rule.from)throw new Error('BOSS阶段禁止此动作');const snapshot=message.snapshot||{};
       if(message.kind==='keyword-input'&&(!listing(message.href)||!snapshot.searchInput))throw new Error('BOSS搜索输入控件缺失');
       if(message.kind==='search'&&(snapshot.inputValue!==value.keyword||!snapshot.searchButton))throw new Error('BOSS搜索证据缺失');
       if(message.kind==='city-open'&&(snapshot.query!==value.keyword||!snapshot.cityControl))throw new Error('BOSS城市入口缺失');
+      if(message.kind==='city-letter'&&!snapshot.cityLetterTab)throw new Error('BOSS目标城市字母分组缺失');
       if(message.kind==='city-select'&&(!snapshot.exactCityOption))throw new Error('BOSS目标城市选项缺失或已选');
       if(message.kind==='job-click'&&(!value.evidence||message.href!==value.evidence.href||job(message.jobUrl)!==job(value.jobs[value.records.length]?.url)||job(snapshot.card?.url)!==job(message.jobUrl)))throw new Error('BOSS岗位点击身份不匹配');
       const wait=await remaining();if(wait)return{ok:false,waitMs:wait,batch:clone(value)};
