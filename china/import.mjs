@@ -5,6 +5,7 @@ import { withPipelineLock } from '../pipeline-lock.mjs';
 import { openStore, saveStore, storePath, recordObservation, fingerprint, atomicPrivateWrite } from './store.mjs';
 import { liepinBatchPolicy } from './liepin-batch-policy.mjs';
 import { bossBatchPolicy } from './boss-batch-policy.mjs';
+import { loadNativeSalaryFont, normalizeSalary } from './salary.mjs';
 
 const METHODS = new Set(['browser_accessibility', 'browser_dom', 'browser_extension', 'manual_copy']);
 const evidenceBoundary = {
@@ -63,6 +64,23 @@ export async function importJobs(root, { platform, records, batchContext = null 
     if (/[\uE000-\uF8FF]/.test(input.salaryRaw || '')) input.qualityFlags.push('encoded_salary');
     return input;
   });
+  // BOSS renders some salary digits in a private-use font, so salaryRaw can be
+  // missing its numbers. Captures record the stylesheet URLs it was rendered
+  // with; recover the text from that pinned public font. Any failure leaves the
+  // raw value and the encoded_salary flag untouched rather than inventing digits.
+  for (const input of inputs) {
+    if (!/[\uE000-\uF8FF]/.test(input.salaryRaw || '')) continue;
+    try {
+      const fonts = await loadNativeSalaryFont(input, { timeoutMs: 8000 });
+      if (!fonts.length) continue;
+      const decoded = normalizeSalary(input, fonts);
+      if (decoded.salaryText && !/[\uE000-\uF8FF]/.test(decoded.salaryText)) {
+        input.salaryText = decoded.salaryText;
+        if (decoded.salaryEvidence) input.salaryEvidence = decoded.salaryEvidence;
+        input.qualityFlags = input.qualityFlags.filter(flag => flag !== 'encoded_salary');
+      }
+    } catch { /* keep raw salary and flag; never guess */ }
+  }
   const provenance = {
     status: verified ? 'validated' : 'legacy',
     ...(verified ? {} : { reason: 'insufficient_search_provenance' }),
