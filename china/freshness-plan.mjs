@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { getCareerOpsRoot } from '../path-resolver.mjs';
 import { liepinBatchPolicy } from './liepin-batch-policy.mjs';
+import { bossBatchPolicy } from './boss-batch-policy.mjs';
 
 const root = getCareerOpsRoot();
 const CITIES = ['上海', '杭州', '南京', '福州'];
@@ -36,16 +37,22 @@ function loadVerifiedReceipts() {
       const value = JSON.parse(readFileSync(path, 'utf8'));
       // Only a complete, successful envelope establishes city/keyword coverage.
       // Legacy arrays/objects and malformed receipts remain unknown.
-      if (value?.schemaVersion !== 2 || value?.kind !== 'liepin_visible_batch') continue;
-      liepinBatchPolicy.validateReceipt(value);
-      out.push({ value, name, path: `data/china/imports/${name}` });
+      if (value?.schemaVersion !== 2) continue;
+      const platform = value.kind === 'liepin_visible_batch' ? 'liepin'
+        : value.kind === 'boss_visible_batch' ? 'boss' : null;
+      if (!platform) continue;
+      (platform === 'liepin' ? liepinBatchPolicy : bossBatchPolicy).validateReceipt(value);
+      out.push({ value, name, path: `data/china/imports/${name}`, platform });
     } catch { /* one bad historical export must not make preview claim coverage */ }
   }
   return out;
 }
 function latestVerified(receipts, platform, city, keyword) {
-  if (platform !== 'liepin') return null;
-  const matches = receipts.filter(({ value }) => value.batch.city === city && value.batch.keyword === keyword);
+  // BOSS only supports AI Agent today; it has no FDE builder, so an FDE pair can
+  // never be satisfied by a BOSS receipt.
+  if (platform === 'boss' && !bossBatchPolicy.keywords.includes(keyword)) return null;
+  const matches = receipts.filter(({ value, platform: receiptPlatform }) =>
+    receiptPlatform === platform && value.batch.city === city && value.batch.keyword === keyword);
   matches.sort((a, b) => Date.parse(b.value.batch.endedAt) - Date.parse(a.value.batch.endedAt));
   const hit = matches[0];
   if (!hit) return null;
@@ -74,23 +81,28 @@ function preview() {
   const byPair = new Map(summary().map(row => [`${row.city}\u0000${row.platform}`, row]));
   let order = 0;
   const tasks = [];
-  // Coverage is a city×keyword question. A validated Liepin batch is the
-  // only admissible evidence for this pair; BOSS remains listed as a planned
-  // serial platform but its legacy/raw imports cannot mark the pair complete.
-  for (const city of CITIES) for (const keyword of KEYWORDS) {
-    const row = byPair.get(`${city}\u0000liepin`) || { city, platform: 'liepin', jobs: 0, lastObservedAt: null, ageDays: null };
-    const verified = latestVerified(receipts, 'liepin', city, keyword);
+  // Coverage is a platform×city×keyword question. Each platform has its own
+  // builder and its own receipt kind, so one platform's batch never marks the
+  // other platform complete. BOSS only supports "AI Agent" today.
+  for (const platform of PLATFORMS) for (const city of CITIES) for (const keyword of KEYWORDS) {
+    // Both platforms now parameterize the keyword; support is declared by the
+    // platform policy rather than hard-coded here.
+    const supported = platform === 'boss' ? bossBatchPolicy.keywords.includes(keyword) : true;
+    const row = byPair.get(`${city}\u0000${platform}`) || { city, platform, jobs: 0, lastObservedAt: null, ageDays: null };
+    const verified = supported ? latestVerified(receipts, platform, city, keyword) : null;
     tasks.push({
       ...row,
       keyword,
-      platforms: PLATFORMS,
+      supported,
       order: ++order,
       // latest.location/latest.observedAt describe one job's history only;
       // they are deliberately not used as batch coverage evidence.
       ...(verified || { validatedBatchAt: null, receiptId: null, receipt: null, receiptPath: null, recordCount: null, evidence: null }),
-      provenance: verified ? 'validated' : 'provenance_unknown',
+      provenance: verified ? 'validated' : supported ? 'provenance_unknown' : 'unsupported_keyword',
       completed: !!verified,
-      action: `构建 ${city} / ${keyword} 目标版本（猎聘与BOSS串行）；普通Chrome通过可见输入框搜索并点击城市控件；完成后显式导入完整回执 JSON`,
+      action: supported
+        ? `构建 ${platform} / ${city} / ${keyword} 目标版本；普通Chrome通过可见输入框搜索并点击城市控件；完成后显式导入完整回执 JSON`
+        : `${platform} 当前未提供 ${keyword} 关键词构建，需先扩展该平台搜索参数化；不计为已完成`,
     });
   }
   console.log(JSON.stringify({ schemaVersion: 2, keyword: KEYWORDS, cities: CITIES, platforms: PLATFORMS, maxJobsPerBatch: MAX_JOBS_PER_BATCH, minIntervalMs: MIN_INTERVAL_MS, serial: true, stopOn: ['challenge', 'login_required', 'navigation_changed', 'blank_page', 'incomplete_jd'], tasks }, null, 2));
@@ -102,7 +114,7 @@ function build(a) {
   if (!KEYWORDS.includes(keyword)) throw new Error(`keyword 必须是 ${KEYWORDS.join(' 或 ')}`);
   // The BOSS builder currently has no keyword parameterization. Refuse FDE
   // rather than report a successful build that silently searched another term.
-  if (platform === 'boss' && keyword === 'FDE') throw new Error('BOSS builder 尚未支持 FDE 关键词参数化，已拒绝构建（未假成功）');
+  if (platform === 'boss' && !bossBatchPolicy.keywords.includes(keyword)) throw new Error(`BOSS builder 不支持 ${keyword}，已拒绝构建（未假成功）`);
   const script = platform === 'liepin' ? 'china/build-liepin-extension.mjs' : 'china/build-extension.mjs';
   const r = spawnSync(process.execPath, [script], { cwd: root, env: { ...process.env, CAREER_OPS_CITY: city, CAREER_OPS_KEYWORD: keyword }, stdio: 'inherit' });
   if (r.status !== 0) process.exit(r.status ?? 1);

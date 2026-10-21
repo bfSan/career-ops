@@ -1,7 +1,7 @@
 // Self-reported browser evidence; internal consistency is not independent attestation.
 export function createBossBatchPolicy() {
   const cities = ['上海', '杭州', '南京', '福州'];
-  const keywords = ['AI Agent'];
+  const keywords = ['AI Agent', 'FDE'];
   const intervalMs = 15000;
   const hosts = ['www.zhipin.com', 'zhipin.com'];
   function validUrl(value, path = /^\/web\/geek\/jobs\/?$/) {

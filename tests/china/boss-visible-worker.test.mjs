@@ -16,8 +16,10 @@ test('BOSS worker binds one owner, rejects other tab, and gates first action by 
  h.advance(15000);reserve=await h.worker.dispatch({type:'RESERVE',batchId:r.batch.id,revision:r.batch.revision,stage:r.batch.stage,href:HOME,kind:'keyword-input',snapshot:{searchInput:true}},sender(id,HOME));assert.equal(reserve.ok,true);
 });
 
-test('BOSS worker explicitly rejects FDE and stale stage messages',async()=>{
- const h=setup();await assert.rejects(h.worker.dispatch({type:'START',city:'上海',keyword:'FDE'},CONTROL));
+test('BOSS worker accepts FDE but rejects unknown keywords and stale stage messages',async()=>{
+ const h=setup();
+ await assert.rejects(h.worker.dispatch({type:'START',city:'上海',keyword:'FDEx'},CONTROL),/不在计划中/);
+ await assert.rejects(h.worker.dispatch({type:'START',city:'深圳',keyword:'FDE'},CONTROL),/不在计划中/);
  const started=await h.worker.dispatch({type:'START',city:'上海',keyword:'AI Agent'},CONTROL);assert.equal(started.ok,true);const id=started.batch.ownerTabId;
  const hello=await h.worker.dispatch({type:'HELLO',href:HOME},sender(id,HOME));
  const stale=await h.worker.dispatch({type:'RESERVE',batchId:hello.batch.id,revision:hello.batch.revision-1,stage:hello.batch.stage,href:HOME,kind:'keyword-input',snapshot:{searchInput:true}},sender(id,HOME));assert.equal(stale.stale,true);

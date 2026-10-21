@@ -3,7 +3,7 @@ export function createBossVisibleWorker({chrome, policy, now=()=>Date.now(), ran
   const HOME='https://www.zhipin.com/web/geek/jobs';
   const KEY='careerOpsBossVisibleBatchV2';
   const LAST='careerOpsBossVisibleLastActionAtV2';
-  const VERSION='2.0.1';
+  const VERSION='2.1.0';
   let serial=Promise.resolve();
   const enqueue=fn=>{const result=serial.then(fn);serial=result.catch(()=>{});return result;};
   const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));

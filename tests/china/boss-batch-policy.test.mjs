@@ -7,7 +7,7 @@ test('BOSS schema2 policy accepts exact evidence and serialized factory', () => 
   assert.equal(p.validateReceipt(bossEnvelope()).records.length, 1);
   assert.equal(new Function('return (' + createBossBatchPolicy.toString() + ')()')().validateReceipt(bossEnvelope()).records.length, 1);
 });
-for (const bad of ['FDE','AI%2BAgent','AI%2520Agent']) test('BOSS rejects wrong query '+bad, () => {
+for (const bad of ['FDEx','AI%2BAgent','AI%2520Agent']) test('BOSS rejects wrong query '+bad, () => {
   const r=bossEnvelope();r.batch.listingEvidence.href=r.batch.listingEvidence.href.replace('AI%20Agent',bad);assert.throws(()=>p.validateReceipt(r));
 });
 const mutations = {
@@ -38,4 +38,15 @@ test('BOSS面板缺地区时只接受显式listing_card来源',()=>{
   assert.throws(()=>p.validateReceipt(mismatched),/地点/);
   const fromPanel=bossEnvelope();
   assert.equal(p.validateReceipt(fromPanel).records.length,1,'详情自带地区仍正常');
+});
+
+test('BOSS schema2 policy accepts an exact FDE batch', () => {
+  const r = bossEnvelope();
+  r.batch.keyword = 'FDE';
+  r.batch.listingEvidence.href = 'https://www.zhipin.com/web/geek/jobs?query=FDE&city=101190100';
+  r.batch.listingEvidence.inputValue = 'FDE';
+  for (const action of r.batch.actions) action.href = action.href.replace(/query=AI%20Agent/, 'query=FDE');
+  for (const record of r.records) record.searchContext.keyword = 'FDE';
+  for (const record of r.records) record.searchContext.listingHref = r.batch.listingEvidence.href;
+  assert.equal(p.validateReceipt(r).records.length, 1);
 });
