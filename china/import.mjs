@@ -4,6 +4,7 @@ import { jobIdentity, extractPage } from './platforms.mjs';
 import { withPipelineLock } from '../pipeline-lock.mjs';
 import { openStore, saveStore, storePath, recordObservation, fingerprint, atomicPrivateWrite } from './store.mjs';
 import { liepinBatchPolicy } from './liepin-batch-policy.mjs';
+import { bossBatchPolicy } from './boss-batch-policy.mjs';
 
 const METHODS = new Set(['browser_accessibility', 'browser_dom', 'browser_extension', 'manual_copy']);
 const evidenceBoundary = {
@@ -17,10 +18,11 @@ const evidenceBoundary = {
 export async function importJobs(root, { platform, records, batchContext = null }) {
   const verified = batchContext !== null && batchContext !== undefined;
   let envelope = null;
+  const batchPolicy = platform === 'liepin' ? liepinBatchPolicy : platform === 'boss' ? bossBatchPolicy : null;
   if (verified) {
-    if (platform !== 'liepin') throw new Error('有边界猎聘回执只能导入 liepin');
+    if (!batchPolicy) throw new Error('该平台不支持有边界可见批次回执');
     envelope = structuredClone(batchContext);
-    liepinBatchPolicy.validateReceipt(envelope);
+    batchPolicy.validateReceipt(envelope);
     if (records !== undefined && JSON.stringify(records) !== JSON.stringify(envelope.records)) {
       throw new Error('Import records differ from the complete batch envelope');
     }
@@ -29,7 +31,7 @@ export async function importJobs(root, { platform, records, batchContext = null 
   if (!Array.isArray(records) || !records.length || records.length > 100) throw new Error('Import requires 1–100 records');
   const inputs = records.map(record => {
     if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('Invalid import record');
-    const url = platform === 'liepin' && verified ? liepinBatchPolicy.jobUrl(record.url) : record.url;
+    const url = verified ? batchPolicy.jobUrl(record.url) : record.url;
     const identity = jobIdentity(platform, url);
     if (record.complete !== true) throw new Error('Import requires an explicitly confirmed complete description');
     if (!METHODS.has(record.captureMethod)) throw new Error('Unknown captureMethod');
@@ -73,7 +75,7 @@ export async function importJobs(root, { platform, records, batchContext = null 
     : { schemaVersion: 2, kind: 'assisted_job_import', records: inputs, provenance };
   // Re-validate the exact persisted form too, before even acquiring the lock
   // (the lock creates directories). Invalid/fake envelopes cause zero writes.
-  if (verified) liepinBatchPolicy.validateReceipt(receipt);
+  if (verified) batchPolicy.validateReceipt(receipt);
   const path = `data/china/imports/${fingerprint(receipt)}.json`;
   const receiptPath = join(root, path);
   const content = `${JSON.stringify(receipt, null, 2)}\n`;
